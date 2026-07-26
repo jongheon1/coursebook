@@ -1,0 +1,15 @@
+# 강의 녹음·녹취록·교수 강의안·계획서 PDF 원본 — 저작권/초상 문제로 로컬 전용
+_private/
+
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+*.ko
+*.o
+*.mod*
+.tmp_versions/
+Module.symvers
+modules.order
