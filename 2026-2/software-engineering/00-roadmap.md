@@ -34,7 +34,7 @@
 
 시험 주(W8, W16)·자율학습 주(W15)는 챕터를 만들지 않는다. 슬러그는 각 주차 제목 옆에 표기.
 
-### W1 — Introduction to Software Engineering (`01-intro-se`)
+### W1 — Introduction to Software Engineering (`01-introduction-to-software-engineering`)
 
 - SE 정의와 programming과의 차이 (개인 프로그램 vs 팀·수명 긴 제품); software 종류 — generic products vs custom systems, 요구사항 주도권 차이.
 - essential attributes of good software: maintainability, dependability & security, efficiency, acceptability.
@@ -42,7 +42,7 @@
 - professional ethics: confidentiality, competence, intellectual property rights, computer misuse.
 - 소스: Sommerville ch1; CMU 17-313 [course overview](https://cmu-313.github.io/overview/).
 
-### W2 — SDLC 전 단계 훑기 (`02-sdlc`)
+### W2 — SDLC 전 단계 훑기 (`02-sdlc-stages`)
 
 - requirements: functional vs non-functional 구분, 측정 가능한 NFR 작성 (예: "p99 response < 200ms"); elicitation 기법과 실패 모드 (tacit knowledge, conflicting stakeholders); validation (traceability, review).
 - design: 산출물 분류 — architectural / interface / component / data design.
@@ -51,7 +51,7 @@
 - deployment & maintenance: maintenance 3유형 (corrective/adaptive/perfective)과 비용 비중, legacy system 딜레마.
 - 소스: Sommerville ch4 (requirements engineering), ch7 (design and implementation), ch8.0–8.1 (V&V), ch9 (software evolution).
 
-### W3 — Process Models, DevOps, Cloud, OSS Licenses (`03-process-devops-cloud-licenses`)
+### W3 — Process Models, DevOps, Cloud, OSS Licenses (`03-process-models-devops-licenses`)
 
 - process models: plan-driven vs agile 스펙트럼; waterfall (단계 동결의 근거·실패 모드), incremental (조기 피드백 vs architecture erosion), reuse-oriented, spiral (risk-driven).
 - agile: manifesto 4 values; XP practices (TDD, pair programming, CI, refactoring, small releases); Scrum — product backlog, sprint, scrum master vs product owner, velocity.
@@ -60,7 +60,7 @@
 - OSS licenses: **permissive (MIT, Apache-2.0) vs copyleft (GPLv3 strong, LGPL weak)**; Apache-2.0의 명시적 patent grant; derivative work과 linking 논쟁; license compatibility (Apache-2.0 → GPLv3 방향 호환); 위반 리스크.
 - 소스: Sommerville ch2–3; Forsgren, Humble & Kim, *Accelerate*, IT Revolution, 2018 + [dora.dev](https://dora.dev/); [NIST SP 800-145](https://csrc.nist.gov/pubs/sp/800/145/final); [12factor.net](https://12factor.net/); 라이선스 원문 [MIT](https://opensource.org/license/mit) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) / [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html); [choosealicense.com](https://choosealicense.com/).
 
-### W4 — Git/GitHub, Containers & Docker, Architecture Overview (`04-git-docker-arch-overview`)
+### W4 — Git/GitHub, Containers & Docker, Architecture Overview (`04-git-docker-architecture-overview`)
 
 - Git internals: object model — blob/tree/commit/annotated tag, SHA-1 content addressing, 히스토리는 DAG; refs·HEAD·detached HEAD; merge (3-way) vs rebase (히스토리 재작성 — 공유 브랜치 rebase 금지 이유); packfile과 delta compression.
 - 브랜칭 전략: **git-flow** (develop/release/hotfix — 버전드 릴리스용) vs **GitHub flow** (main + PR — continuous deployment용); 릴리스 모델별 선택 기준; PR 기반 협업.

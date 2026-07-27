@@ -1,0 +1,8 @@
+# backend service dependencies (sample, mirrors the chapter's worked example 3)
+flask==3.0.3
+requests==2.32.3
+psycopg2==2.9.9          # PostgreSQL driver, dynamically linked C extension
+chartkit==2.1.0          # chart rendering, imported into our process
+pdfengine==10.2.1        # PDF rasterizer, invoked as a separate process
+orjson-like==3.10.0
+javabridge==0.4.2        # links against the OpenJDK class library

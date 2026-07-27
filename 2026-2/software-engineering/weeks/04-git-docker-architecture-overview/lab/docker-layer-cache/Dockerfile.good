@@ -1,0 +1,14 @@
+# GOOD ordering: least-volatile first. Only the dependency manifest is
+# copied before the install step, so editing application source leaves
+# the install layer's cache key unchanged -> CACHED on rebuild.
+FROM alpine:3.20
+WORKDIR /app
+
+COPY deps.txt .
+
+# Same simulated install as Dockerfile.bad.
+RUN echo "installing: $(tr '\n' ' ' < deps.txt)" && sleep 3 && touch /deps-installed
+
+COPY src/ src/
+
+CMD ["cat", "src/main.py"]

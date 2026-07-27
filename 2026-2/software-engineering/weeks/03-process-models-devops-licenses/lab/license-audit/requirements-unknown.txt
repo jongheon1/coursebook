@@ -1,0 +1,2 @@
+# a dependency whose license nobody recorded — the audit must block it
+leftpad-utils==1.0.0

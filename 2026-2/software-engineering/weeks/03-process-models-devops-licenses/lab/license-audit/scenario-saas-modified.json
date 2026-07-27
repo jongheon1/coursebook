@@ -1,0 +1,10 @@
+{
+  "name": "saas-with-patched-pdfengine",
+  "distribution": "saas",
+  "linking": {
+    "psycopg2": "dynamic",
+    "pdfengine": "process",
+    "javabridge": "dynamic"
+  },
+  "modified": ["pdfengine"]
+}

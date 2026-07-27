@@ -1,0 +1,4 @@
+# Verified with Python 3.14.3 on macOS arm64 (CPU only):
+#   torch==2.13.0, numpy==2.5.1
+torch>=2.4
+numpy>=1.26

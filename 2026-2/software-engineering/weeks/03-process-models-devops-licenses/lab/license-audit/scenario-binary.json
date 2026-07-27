@@ -1,0 +1,10 @@
+{
+  "name": "on-prem-appliance",
+  "distribution": "binary",
+  "linking": {
+    "psycopg2": "dynamic",
+    "pdfengine": "process",
+    "javabridge": "dynamic"
+  },
+  "modified": []
+}

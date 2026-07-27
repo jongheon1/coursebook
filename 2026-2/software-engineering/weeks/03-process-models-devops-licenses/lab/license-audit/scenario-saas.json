@@ -1,0 +1,10 @@
+{
+  "name": "saas-unmodified",
+  "distribution": "saas",
+  "linking": {
+    "psycopg2": "dynamic",
+    "pdfengine": "process",
+    "javabridge": "dynamic"
+  },
+  "modified": []
+}

@@ -1,0 +1,14 @@
+# BAD ordering: source code is copied BEFORE the dependency install.
+# Any edit to any file under the build context changes the checksum of
+# the `COPY . .` layer -> that step and EVERY step after it re-runs,
+# including the expensive install.
+FROM alpine:3.20
+WORKDIR /app
+
+COPY . .
+
+# Stand-in for `pip install -r requirements.txt` / `npm ci` / `apt-get install`.
+# `sleep 3` simulates the network+CPU cost so cache misses are visible.
+RUN echo "installing: $(tr '\n' ' ' < deps.txt)" && sleep 3 && touch /deps-installed
+
+CMD ["cat", "src/main.py"]
