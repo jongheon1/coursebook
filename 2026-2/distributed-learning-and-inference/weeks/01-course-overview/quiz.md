@@ -106,6 +106,36 @@ Active recall 은행. 답을 가리고 소리 내어 답한 뒤 확인할 것. `
 
 ---
 
+## From lecture
+
+> 2026-09-02 실제 Week 1 강의(오리엔테이션)에서 나온, 예습 챕터에는 없던 내용. `../../semester/week-01/delta.md` 참고.
+
+**Q26.** 교수가 강의에서 분산 학습을 나눈 두 상위 유형 "Type 1"과 "Type 2"는 각각 무엇을 가리키나?
+
+**A.** **Type 1**: 단일 조직(서버/데이터센터/랩) 안에서 여러 GPU로 훈련을 효율화 — data parallelism, model parallelism 등 이 챕터의 §7.1 분류 체계(data/pipeline/tensor/sequence/hybrid)가 전부 여기 속한다. **Type 2**: multi-user collaboration, 즉 federated learning — 데이터가 이미 여러 사용자에게 자연스럽게 분산되어 있는 상황(W10-11).
+
+**Q27.** 교수가 이 과목에서 다루지 않겠다고 명시적으로 선을 그은 것과, 대신 다루겠다고 한 것은?
+
+**A.** Pre-training/fine-tuning 같은 **특정 학습 알고리즘 자체는 깊이 다루지 않음**. 대신 그 과정에서 생기는 **공학적 이슈** — GPU 메모리/연산/지연(delay) 문제, 원인은 (1) 대규모 데이터셋 (2) 대규모 모델 — 를 다룬다.
+
+**Q28.** Foundation model의 pre-training과 fine-tuning은 각각 주로 누가 수행하고, 하드웨어 요구량은 어떻게 다른가?
+
+**A.** Pre-training은 주로 산업계(OpenAI, DeepSeek, Meta 등)가 수행하며 시간·데이터가 훨씬 많이 필요해 하드웨어 요구량이 크다. Fine-tuning은 산업계·학계 양쪽의 사용자/연구자가 수행 가능하며 연산 부담이 훨씬 적다.
+
+**Q29.** 추론(inference)에도 분산이 필요한 이유를 ChatGPT 예시로 설명하면?
+
+**A.** 수십억 사용자가 동시에 OpenAI에 요청을 보내므로, 단일 GPU·단일 모델 복사본으로는 처리 불가. 대응: (1) 모델을 여러 GPU에 쪼개 속도 향상, (2) 모델 복사본을 여러 개 두어 동시 요청 처리.
+
+**Q30.** Edge-cloud collaboration 관점에서 추론 위치를 선택할 때의 트레이드오프는?
+
+**A.** 로컬(사용자 기기) 모델로 직접 추론 vs. 클라우드 서버로 요청을 보내고 결과를 받는 방식 중 선택. 사용자가 많아질수록 서버로 요청이 몰리면 서버 측 부담이 커진다는 것이 트레이드오프의 핵심.
+
+**Q31.** 성적에서 개인과제 30%는 어떻게 구성되고, 출석 규정에서 지각과 결석의 환산 관계는?
+
+**A.** 개인과제 30% = 미니과제 1(15%) + 미니과제 2(15%). 출석: 지각 3회 = 결석 1회, 결석 2회(=지각 6회 포함)까지는 무감점, 초과분부터 결석 1회당 -1점.
+
+---
+
 ## Anki TSV
 
 ```tsv
@@ -137,4 +167,10 @@ HFU vs MFU	HFU 는 실행된 전체 FLOPs (recomputation 포함), MFU 는 모델
 대규모 MFU 실측 기준선	PaLM 46.2%, Llama 3 405B 38–43% (16,384 H100) — 40%± 가 잘 튜닝된 수준
 Scaling efficiency (strong / weak)	E_strong = T(1)/(p·T(p)), E_weak = X(p)/(p·X(1)) — 논문의 linear scaling 그래프는 대부분 weak
 병렬화 축 4개: 쪼개는 것 → 통신	data: batch → grad allreduce / pipeline: layer 블록 → 경계 activation / tensor: layer 내 행렬 → layer 당 allreduce / sequence: seq 축 → activation 재분배
+Type 1 vs Type 2 분산 학습 (교수 어휘)	Type 1: 단일 조직 내 여러 GPU로 훈련 효율화 (data/model parallelism). Type 2: multi-user collaboration = federated learning (데이터가 이미 사용자별로 분산)
+이 과목이 다루지 않는 것 / 다루는 것	pre-training·fine-tuning 알고리즘 자체는 X / 그로 인한 GPU 메모리·연산·지연 문제는 O (원인: 대규모 데이터셋 + 대규모 모델)
+Pre-training vs fine-tuning: 수행 주체·하드웨어 요구량	pre-training: 주로 산업계, 하드웨어 요구 큼 / fine-tuning: 산업계+학계, 하드웨어 요구 작음
+분산 추론이 필요한 이유 (ChatGPT 예시)	수십억 동시 사용자 → 단일 GPU/복사본으로 불가 → 모델을 여러 GPU에 분할 + 복사본 다중화
+Edge-cloud collaboration 추론의 트레이드오프	로컬 기기 추론 vs 클라우드 서버 요청 — 사용자 증가 시 서버 부담 증가
+개인과제 30% 구성 / 출석 지각-결석 환산	미니과제 1(15%)+2(15%) / 지각 3 = 결석 1, 결석 2(=지각6)까지 무감점, 초과 시 결석당 -1점
 ```
