@@ -94,3 +94,85 @@ He noted the overall structure might shift slightly depending on circumstances, 
 ## 6. Closing
 
 The instructor summarized the purpose of the first lecture himself: "to explain what this course is about, and why it's important enough to learn." He closed by emphasizing that distributed training and inference techniques are genuinely needed in practice because of large-scale data and model issues. Starting next class (Friday), the plan is a deep-learning-basics warm-up, followed the week after by the memory/compute/delay issues in centralized training.
+
+---
+
+# Day 2 (2026-09-04, Fri) — Basics of Deep Learning (Week 1 & 2)
+
+> Source: lecture-audio STT from 2026-09-04 (Fri) (whisper-1 verbose_json, real per-segment timestamps) + slides `week1-02-dl-basics.pdf` ("Week 1 & 2 — Basics of Deep Learning"). **The slide title spans Week 1&2 as a whole, but what was actually covered in this lecture only goes up through the definition of DNNs, the loss function, and mini-batch SGD from the "This Week's Goal" list — backpropagation, overfitting, batch normalization, and applications to CNN/attention architectures are all in the deck but were explicitly NOT covered today (the instructor deferred them to next Wednesday).** The notes below only cover what was actually taught.
+
+## 7. Logistics
+
+- Attendance will start being checked via the Y-Attend app code from the next session (Fri) on, but the instructor explicitly noted that in past courses there had been a large gap between "students who checked in" and "students who were actually present," so he won't verbally check attendance often. He mentioned that "gaming attendance like that doesn't help you in the long run — you're only cheating yourself." He may still spot-check verbally if the app shows everyone present but the room looks sparse.
+- For students unfamiliar with PyTorch/ML, additional PyTorch-basics material has been uploaded to LearnUs/Colab.
+- He reiterated that today's (and probably next week's) session won't have attendance checked, since it's a deep-learning-basics recap — students who already know the material can leave, and those who don't should prioritize understanding fundamentals over memorization.
+
+## 8. Definition of a Deep Neural Network
+
+- Nowadays most machine learning models are deep neural networks (DNNs). Structure: input data (an image or a sentence) → DNN → prediction (next-word prediction, image classification, object detection, solving a math problem, etc.). The running example is image classification — feeding in a dog image and getting the decision "dog."
+- **Structure of a single neuron** (biologically inspired): inputs $x_0, x_1, x_2$ (real-valued numbers such as RGB values of an image patch, or word embeddings) are each multiplied by a weight $w_0, w_1, w_2$ and summed (weighted sum) → a bias $b$ is added → the result goes through a non-linear activation function to produce the neuron's output. The $w$'s and $b$ are the model parameters, and the goal of training is to optimize them for the task.
+- This output becomes the input to a neuron in the next layer, and the same process (multiply → sum → add bias → non-linear activation) repeats. Stacking these neurons vertically and horizontally is what forms a deep neural network.
+
+## 9. Why Stack Layers, and Why Non-Linearity Is Needed
+
+- **Why stack layers**: a neural network is, in the end, just a function. More layers (= more parameters) means the function can express more complex, more varied relationships. Designing a neural network really means designing a specific, complicated function that solves the task well — that's why people keep adding more layers.
+- **Why a non-linear activation function is needed (derived directly)**: the instructor directly asked the class whether a non-linear activation function is really needed. If you remove all non-linear activations, the network collapses into a plain chain of matrix multiplications. With input $x$ and layer-1 weights $W_1$ (e.g. a 5-by-4 matrix), layer 1's output is $W_1x$. Without non-linearity, this feeds straight into layer 2 and then layer 3, so the final output becomes $W_3 W_2 W_1 x$ — and the product of these three matrices can always be collapsed into a single matrix $W'$. **In other words, without non-linear activations, a 3-layer network (or even a 100-layer one) can always be rewritten as a single-layer network — stacking layers doesn't increase expressiveness at all.** So the non-linear activation function is what actually gives the network its added expressiveness.
+- Which activation function is best depends on the application, dataset, and model architecture — there's no universally "best" one, but non-linearity itself is necessary. Examples given: ReLU (outputs $z$ if $z>0$, else 0 — the most intuitive form), and mentions of Leaky ReLU, sigmoid, and tanh.
+
+## 10. The Softmax Layer
+
+- The network's output is supposed to be a probability, but without any conversion there's no guarantee the raw output falls between 0 and 1. The softmax layer converts the model's output into probability values.
+- Method: exponentiate each value, then normalize by dividing by the sum of those exponentials (as opposed to simply normalizing by the raw sum). Because of the exponentiation, the relative gap between output values becomes larger once converted to probabilities — e.g. a 3–4× gap before softmax can become roughly a 40× gap after softmax.
+- For a plain classification task, the class with the highest probability is chosen; for an LLM's next-word prediction, the highest-probability next word is chosen. The whole network is often described as a "stack of weights and activations" — this kind of architecture is called a multi-layer perceptron (MLP), or just a deep neural network.
+
+## 11. Forward Propagation
+
+- Forward propagation is the whole process of inputting an image or word into the network and computing the output.
+- **Dimension walkthrough (worked in class)**: given a data sample $x$ as a 784-dimensional vector ($x_1,\dots,x_{784}$), the number of columns of layer-1 weights $W_1$ must equal 784 (matching the input dimension), and the number of rows equals the number of neurons in the next layer. Computing $W_1x$, adding the bias, and applying the element-wise non-linear activation gives $a_1$ (whose length equals the number of neurons in that layer). The same repeats for $W_2$ (e.g. with 10 rows if there are 10 output classes), ending with softmax to obtain the probability vector $y$. This entire computation is forward propagation.
+- Knowing forward propagation lets you evaluate a model's performance on a new test sample (feed it in → compute → check the prediction). But we still haven't covered **how to actually train** the model — training means optimizing all the $W$ and $b$ parameters for the task, and this isn't solvable by hand, since changing one parameter cascades through the whole downstream computation.
+
+## 12. Loss Function — Cross-Entropy
+
+- To train, you first need an objective/loss function that defines "what to optimize." The goal of neural network training: find the best $W^*$ (all model parameters) that minimizes the loss function.
+- Training is based on training data: for AlphaGo, past game records; for image classification, labeled images (this one labeled "dog," that one "horse," another "car"). **The overall loss function is typically defined as the average of the per-sample loss**: for $n$ samples, with $L_k(w)$ the loss on the $k$-th sample, the function should be small when a sample is predicted correctly and large when it's predicted incorrectly.
+- **Cross-entropy loss defined (derived via a 5-class example)**: $C$ is the number of classes, $t_i$ is the one-hot-encoded ground truth (1 if $i$ is the correct class, else 0), $y_i$ is the network's softmax output, and $q_k$ is the correct class for sample $k$. Cross-entropy loss is $L_k(w) = -\sum_i t_i \log y_i$; since $t_i$ is 1 only at the correct class and 0 everywhere else, the sum collapses to a single term, $-\log y_{q_k}$. In the slide's worked example (softmax output [0.2, 0.1, 0.4, 0.15, 0.15], with the correct class at the first, 0.2, position), this gives $-\log(0.2)$.
+  - (STT correction) The audio alone sounds like "minus log 0.02," but the slide's actual number is 0.2, and $-\log(0.2)$ is the correct computation — the slide is treated as authoritative here.
+- Minimizing cross-entropy means pushing $y$ toward the ground truth $t$ — the correct-class probability toward 1, everything else toward 0. Mean squared error (MSE), which directly measures the distance between the two vectors, is mentioned as an alternative, but cross-entropy is more common in practice.
+- The final loss is the average cross-entropy over the whole training set. "The model is well trained" means this average loss has been minimized so that as many samples as possible are predicted correctly.
+
+## 13. Gradient Descent
+
+- We now have an objective (the loss function), but not yet a way to optimize it — this is a very high-dimensional, non-convex problem with millions of parameters, not solvable analytically.
+- **1D intuition**: plotting $L(w)$ against $w$, if the slope is negative move right, if positive move left ($w_{new} = w_{prev} \mp \Delta$), and if the slope is zero stay put — like a ball rolling downhill. The slope's **magnitude** matters too: it's large far from the minimum and shrinks toward zero near it, so a larger magnitude means moving more aggressively and a smaller one means moving more precisely. This is captured in the update rule $w_{new} = w_{prev} - \eta \cdot \text{slope}$ ($\eta$ = step size / learning rate).
+- The gradient is defined as the derivative of the loss with respect to $w$. Since the loss is the average of per-sample losses, its gradient is likewise the average of the per-sample gradients.
+- **Full algorithm**: randomly initialize $w_0$ → compute the gradient using the entire training set → update to get $w_1$ → recompute the gradient over the entire set again → get $w_2$ → ... repeated hundreds of times. **One epoch = one complete pass through the entire training dataset** (in this basic form of GD, every single gradient computation uses the whole dataset, so one update = one epoch).
+- **Trade-offs**: using the whole dataset each step is stable but computationally expensive, and it's prone to getting stuck in local minima (a real DNN's loss landscape isn't a simple bowl — it's a high-dimensional, non-convex function with a global minimum plus many local minima).
+
+## 14. Mini-Batch SGD
+
+- Same philosophy as GD (repeatedly compute a gradient and update), but **each update uses only a subset (a mini-batch) of the data rather than all of it**. Example: split the full dataset into 3 mini-batches; compute the gradient and update using the first mini-batch, then the next, and so on.
+- **Why it's less stable**: the data distribution of a specific mini-batch can differ from that of the full dataset, so the "optimal" gradient direction computed on a mini-batch can diverge from the true full-dataset direction — the path becomes noisier rather than heading straight for the target. The upside is that this noise can actually help escape local minima.
+- **Epochs and shuffling**: with 3 mini-batches, one epoch = 3 mini-batch updates. Once an epoch finishes, the dataset must be reshuffled before forming new mini-batches — reusing the exact same mini-batch composition biases the model toward it and hurts performance.
+- **GD vs. mini-batch SGD vs. SGD (batch size 1)**: all three share the same update rule ($w_{t+1} = w_t - \eta g_t$), differing only in how many samples $g_t$ is computed over (the whole set / a mini-batch / a single sample). The name "stochastic" comes from the randomness of mini-batch sampling.
+
+## 15. SGD with Momentum, RMSProp, Adam
+
+All of these just swap in a different update formula for the same underlying gradient-descent template (referred to in class as "line 5 of page 27").
+
+- **SGD with Momentum**: considers not just the current gradient $g_t$ but also the previous update direction (momentum) — analogous to driving a car: turning the wheel doesn't make the car instantly change direction, it goes somewhere in between. Momentum is computed as $m_t = \alpha \cdot m_{t-1} + g_t$, and the update is $w_{t+1} = w_t - \eta \cdot m_t$. With $\alpha=0$, $m_t = g_t$, reducing exactly to plain GD with no momentum. Upside: faster convergence, easier escape from local minima. Downside: momentum that gets too large can overshoot past not just bad local minima but even the global minimum or other good local minima.
+- **RMSProp**: keeps the direction unchanged and only adjusts the **step size (learning rate)** based on recent gradient magnitude. $v_t$ is an exponential moving average of squared gradients (element-wise, e.g. the vector [1,2,3] squares to [1,4,9]) — a large recent gradient magnitude makes $v_t$ large, which shrinks the effective learning rate (roughly $\eta / \sqrt{v_t}$), leading to more precise exploration; a small recent magnitude makes the effective learning rate larger (moving through quickly). Rationale: a steep region (large recent gradients) is likely near a promising minimum, so explore it carefully; a flat region (small recent gradients) probably has no good minimum, so move through it fast — this directly addresses momentum's problem of overshooting a good minimum.
+- **Adam**: combines momentum (SGD-momentum's $m_t$) with RMSProp's adaptive learning rate. There are also bias-correction terms, which the instructor noted aren't that critical to dwell on right now. It's the most widely used optimizer in practice, and the plots shown indicate most modern optimizers (RMSProp, Adam, etc.) outperform plain SGD. **That said, there's no guarantee Adam is always best** — depending on model architecture, dataset, and amount of data, a different optimizer can perform better.
+
+## 16. Memory Cost by Optimizer (Tied Back to This Course's Focus)
+
+The one point in this lecture where the instructor explicitly tied the material back to the course's systems/memory angle: different optimizers require different amounts of GPU memory during training.
+- Plain SGD: only needs to store the model (weights) and the gradient — roughly 2× the model size.
+- SGD with Momentum: also stores the momentum buffer — roughly 3×.
+- Adam: keeps the momentum-like term plus the additional RMSProp-style $v_t$ term, plus weights and gradient, all simultaneously — even more memory.
+→ He gave the practical example that on a single GPU, a model that fits under SGD might run out of memory (OOM) under Adam — offered as the reason it's worth understanding exactly what each optimizer stores.
+
+## 17. Preview of Next Session, and What Was Not Covered Today
+
+- The remaining open question, stated explicitly: "how do we actually compute the gradient $g_t$ that all these optimizers use?" — that answer is backpropagation, which he explicitly said would be covered next Wednesday.
+- The class ran without a break, and closed by noting that next Wednesday will cover backpropagation, followed by the issues in centralized training (memory/compute/delay — the Week 2 chapter's territory).
+- **In the slide deck but not covered in this lecture** (per the no-speculation policy, these are intentionally not written up here yet): the detailed derivation of backpropagation itself, overfitting and its remedies (data augmentation, L2 regularization/weight decay, dropout/dropconnect), batch normalization, and applications to other architectures like CNNs/attention. These will be added, along with an updated `delta.md`, once the lecture(s) that actually cover them are ingested.

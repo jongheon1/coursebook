@@ -106,6 +106,26 @@ Active recall 은행. 답을 가리고 소리 내어 답한 뒤 확인할 것. `
 
 ---
 
+## From lecture (Week 1 Day 2, 2026-09-04 — DL basics recap)
+
+**Q26.** 비선형 activation function이 신경망에 필요한 이유를 행렬 관점에서 증명하면?
+
+**A.** 비선형성을 제거하면 각 layer는 $\mathbf{z}^{[l]}=\mathbf{W}^{[l]}\mathbf{a}^{[l-1]}$만 남아, $L$개 layer의 출력이 $\mathbf{W}^{[L]}\cdots\mathbf{W}^{[1]}\mathbf{x}$가 되고 이는 항상 단일 행렬 $\mathbf{W}'\mathbf{x}$로 합쳐진다 — 몇 layer를 쌓든 표현력이 늘지 않는다. 비선형 activation이 layer 사이에 있어야만 stacking이 실제로 표현력을 늘린다.
+
+**Q27.** Softmax가 단순 정규화(합으로 나누기) 대신 지수함수를 쓰는 이유와 그 효과는?
+
+**A.** 지수함수 $e^{z_i}/\sum_j e^{z_j}$를 쓰면 출력값들 사이의 상대적 격차가 증폭된다 — 예: softmax 이전에 3~4배였던 차이가 이후 약 40배로 벌어질 수 있다. 이는 cross-entropy loss와 결합했을 때 정답 클래스에 확실히 높은 확률을 주도록 유도하는 효과와 맞물린다.
+
+**Q28.** SGD momentum과 RMSProp의 차이, 그리고 Adam이 이 둘을 어떻게 결합하는가?
+
+**A.** Momentum은 **방향**을 이전 업데이트 방향과 현재 gradient의 가중합으로 바꾼다($m_t=\alpha m_{t-1}+g_t$) — 빠른 수렴이 가능하지만 momentum이 커지면 좋은 minimum까지 지나칠 수 있다. RMSProp은 방향은 그대로 두고 **step size**만 최근 gradient 제곱의 이동평균 $v_t$에 반비례하게 조절한다 — 가파른(최근 gradient가 큰) 영역은 정밀하게, 평평한 영역은 빠르게. Adam은 두 아이디어를 합쳐 momentum과 적응적 step size를 동시에 적용한다.
+
+**Q29.** Optimizer 선택이 단일 GPU의 OOM(out-of-memory) 여부를 가를 수 있는 이유는 (정성적 설명)?
+
+**A.** SGD는 weights+gradient만 저장하면 되어 모델 크기의 약 2배, momentum 추가 시 약 3배, Adam은 momentum류 항과 추가 항($v_t$)까지 weights·gradient와 동시에 유지해야 해서 더 많은 메모리가 필요하다. 그래서 SGD로는 돌아가는 모델이 Adam에서는 메모리 부족을 겪을 수 있다 — 이 정성적 설명은 이 챕터 §5.3의 $16\Psi$ bytes 정밀 회계(파라미터당 fp16 weights 2 + fp16 grads 2 + optimizer states 12)의 도입부에 해당한다.
+
+---
+
 ## Anki TSV
 
 ```tsv
@@ -135,4 +155,8 @@ Transformer per-layer checkpointing 이 저장하는 것은?	layer 입력만: $2
 Checkpointing 이 gradient 를 바꾸는가?	아니오 — 같은 커널·같은 입력 재실행이라 bit-identical. 비용은 시간뿐
 Inference 에서 사라지는 학습 메모리 항목은?	gradients, optimizer states, saved activations (backward 없음) — weights 는 $16\Psi \to 2\Psi$
 KV cache 크기 공식과 OPT-13B 수치는?	$2 L h_{kv} s b \cdot$bytes; OPT-13B fp16 = 800 KB/token, 2048 토큰 요청당 1.6 GB
+비선형 activation이 신경망에 필요한 이유 (행렬 관점)?	제거하면 $\mathbf{W}^{[L]}\cdots\mathbf{W}^{[1]}\mathbf{x}$가 단일 행렬 $\mathbf{W}'\mathbf{x}$로 붕괴 — layer를 쌓아도 표현력 불변
+Softmax가 단순 정규화 대신 지수함수를 쓰는 효과는?	출력값 간 상대 격차를 증폭 (예: 3~4배 → 약 40배) — cross-entropy와 결합해 정답 클래스에 확실히 높은 확률 부여
+Momentum vs RMSProp의 차이는?	Momentum은 방향을 바꿈($m_t=\alpha m_{t-1}+g_t$), RMSProp은 방향은 그대로 두고 step size만 $v_t$(최근 gradient 제곱 이동평균)에 반비례해 조절
+Optimizer 선택이 단일 GPU OOM을 가르는 정성적 이유는?	SGD ~2× model size(weights+grad), momentum ~3×(+velocity), Adam은 momentum항+$v_t$까지 동시 유지해 더 필요 — §5.3의 $16\Psi$ 회계의 직관적 도입부
 ```

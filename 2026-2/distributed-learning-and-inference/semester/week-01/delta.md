@@ -34,3 +34,34 @@
 - [ ] LearnUs에서 2026-2학기 실제 중간/기말고사 날짜 확인 → `syllabus.md`의 "확인 필요" 주석 제거하고 정정.
 - [ ] W12-13 로드맵에 edge-cloud/on-device inference 서브토픽 추가 여부, 실제 W12-13 강의 내용 확인 후 결정.
 - [ ] W1 챕터(`weeks/01-course-overview/README.md`)에 Type 1/Type 2 상위 분류 용어를 §7 어딘가에 한 단락으로 추가할지 검토 (선택 사항 — 예습 챕터 자체 품질에는 문제 없음, 교수 어휘와의 정합성 목적).
+
+---
+
+# Day 2 Delta (2026-09-04) — 실제 강의 vs 예습 챕터(`weeks/02-memory-issues/README.md`)
+
+> 비교 대상은 `weeks/02-memory-issues/README.md`("Recap of AI/ML & Memory Issues in Deep Learning") — 제목상 이번 강의와 가장 가까운 예습 챕터다. 다만 그 챕터는 **supervised learning의 ERM 정식화에서 바로 시작해서 computational graph·training memory anatomy(16 bytes/param)·activation memory 공식까지 대학원 입문 수준으로 깊이 들어가는 반면**, 실제 Day 2 강의는 뉴런 정의·비선형성이 왜 필요한지·forward propagation의 차원 계산·gradient descent의 1차원 직관 같은 **훨씬 더 기초적인 온보딩 수준**이었고 backpropagation 직전에서 멈췄다. 그래서 이번 delta도 "정정"보다는 "예습 챕터가 전제하고 건너뛴 기초를 실제 강의가 어떻게 채우는지"와 "두 문서의 깊이·범위 차이"가 중심이다.
+
+## Emphasized (교수가 강조했는데 예습 챕터에서 비중이 작았던 것)
+
+- **"기본 원리를 이해하지 않고 옵티마이저를 그냥 쓰는 습관은 장기적으로 도움이 안 된다"** — momentum, RMSProp, Adam을 설명할 때마다 반복적으로 나온 메시지(§15). 예습 챕터는 이미 그 수준을 전제하고 수식으로 바로 들어가므로 이 페다고지적 강조가 챕터에는 없다. W1 delta에서 이미 확인된 "이 교수는 원리 이해를 강조한다"는 성향과 일관됨 — 이후 주차 노트를 쓸 때도 참고할 만한 프레이밍.
+- **optimizer별 GPU 메모리 요구량 차이(§16)** — SGD 2배, momentum 3배, Adam 그 이상이라는 강의의 직관적 설명은, 예습 챕터 §5.3("fp16 mixed-precision Adam의 파라미터당 16 bytes = weights 2 + grads 2 + opt states 12")의 훨씬 더 정밀한 바이트 단위 회계를 향한 첫 디딤돌이다. 강의는 "왜 optimizer 선택이 단일 GPU의 OOM 여부를 가르는가"를 정성적으로만 짚었을 뿐, 예습 챕터의 $16\Psi$ 유도·GPT-2 XL 24GB 계산까지는 가지 않았다. **후속 강의(들)에서 이 정성적 설명이 §5.3의 정량적 회계와 정확히 연결되는지 확인 필요.**
+
+## New (예습 챕터에 아예 없던 내용 — 더 기초적인 온보딩)
+
+이 항목들은 "정정"이 아니라, 예습 챕터가 전제 지식으로 건너뛴 것들이 실제 강의에서 어떻게 도출되는지를 보여준다.
+
+1. **비선형 activation function이 필요한 이유의 직접 증명** (§9) — 비선형성을 제거하면 $W_3W_2W_1x$가 단일 행렬 $W'x$로 붕괴한다는 것을 직접 유도. 예습 챕터는 신경망 구조 자체를 아예 다루지 않고 바로 supervised learning 정식화로 들어가므로 이 내용이 전혀 없다 — DNN 챕터가 신설된다면 반드시 포함할 것.
+2. **Forward propagation의 구체적 차원 계산 walkthrough** (§11) — $x \in \mathbb{R}^{784}$부터 시작해 $W_1$의 행/열 수를 뉴런 개수로 결정하는 손 계산. 예습 챕터 §2(backpropagation)는 이미 $\mathbf{a}^{[l]}, \mathbf{W}^{[l]}, \mathbf{z}^{[l]}$ 표기를 전제로 시작하므로, 그 표기 자체의 유래를 보여주는 이 walkthrough는 예습 챕터를 읽기 전 온보딩 자료로 유용.
+3. **Cross-entropy loss의 5-class 예시 도출과 softmax의 "상대 격차 증폭" 설명** (§10, §12) — softmax가 지수함수를 쓰기 때문에(단순 정규화가 아니라) 확률로 변환된 뒤 클래스 간 격차가 커진다는 직관, 그리고 $L_k(w)=-\sum t_i\log y_i$가 one-hot 때문에 $-\log y_{q_k}$ 하나로 붕괴하는 유도. 예습 챕터는 loss를 "$\ell(f_w(x),y)$"로 추상화만 하고 cross-entropy의 구체적 형태·유도는 다루지 않는다.
+4. **Gradient descent의 1차원 시각적 직관(공 굴리기 비유) + 기울기 크기가 step size에 반영되는 이유** (§13) — 예습 챕터 §1.1은 곧바로 $w_{t+1}=w_t-\eta\nabla L(w_t)$ 수식과 발산 조건($\eta<2/\lambda$)으로 들어가는데, 이 강의는 그 수식이 나오게 된 직관(기울기 부호로 방향, 기울기 크기로 보폭)을 먼저 손으로 짚었다. 온보딩용으로 참고 가능.
+5. **RMSProp의 상세 설명** (§15) — 예습 챕터는 momentum과 Adam($m_t, v_t$)만 다루고 RMSProp 자체는 별도로 설명하지 않는다. 강의는 "왜 momentum만으로는 부족한가(global minimum까지 지나칠 수 있음) → RMSProp이 어떻게 이를 보완하는가(방향은 그대로, step size만 최근 gradient 크기에 따라 조절) → Adam이 왜 이 둘을 합친 것인가"라는 계보를 명확히 짚었다. 예습 챕터를 개정할 기회가 있다면 이 계보 설명(momentum → RMSProp → Adam)을 §3.2 도입부에 한 문단 추가할 가치가 있음.
+
+## Corrected (교재 서술과 다르거나 더 정확한 서술)
+
+- 없음 — 두 문서가 실제로 겹치는 지점(Adam의 $m_t, v_t$, bias correction)에서 서술이 상충하지 않는다. 강의는 그 지점을 훨씬 얕게(bias correction은 "지금은 안 중요하다"고 생략) 다뤘을 뿐이다.
+- 사소한 정정 1건(교재 아님, STT 오인식): cross-entropy 예시에서 음성만으로는 "$-\log(0.02)$"처럼 들리지만, 슬라이드의 실제 softmax 출력값은 0.2이며 정답 계산은 $-\log(0.2)$다. `notes.md`/`notes.en.md`에 정정 반영함.
+
+## 다음 액션 아이템 (Day 2)
+
+- [ ] 다음 강의(예정: 수요일)에서 backpropagation·overfitting·batch normalization·CNN/attention 응용을 다루면, `notes.md`/`notes.en.md`에 이어서 추가하고 이 delta도 갱신할 것 — 특히 backpropagation 파트는 예습 챕터 §2("Backpropagation: computational graph와 chain rule")와 직접 비교 가능하므로 Corrected 항목이 나올 가능성이 있음.
+- [ ] optimizer별 메모리 요구량에 대한 강의의 정성적 설명(§16)이 후속 강의에서 예습 챕터 §5.3의 $16\Psi$ 바이트 회계로 이어지는지 확인.
