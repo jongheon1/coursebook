@@ -104,6 +104,22 @@
 
 ---
 
+## From lecture (2026-09-05 강의 기반)
+
+**Q26.** 강의에서 소개한 kernel stack 크기(8KB)와 이 챕터 §2의 THREAD_SIZE(16 KiB)가 다른 이유는?
+
+**A26.** 서로 다른 시대·아키텍처 기준이기 때문. 강의의 8KB는 32비트 x86·Linux 2.6.11 시절 수치(`THREAD_SIZE 8192`, 4KB 페이지 2개)이고, 이 챕터의 16 KiB는 현대 x86-64 기준(`PAGE_SIZE << THREAD_SIZE_ORDER`, order=2)이다. 시험 답안에는 현대 x86-64 기준 16 KiB를 쓸 것.
+
+**Q27.** 강의에서 프로세스 리스트 순회 매크로로 언급한 `for_each_task`가 최신 커널에서는 뭐라고 불리나?
+
+**A27.** `for_each_process` (`include/linux/sched/signal.h`). `for_each_task`는 2.6.11 시절 이름이며 동작(다음 태스크 포인터를 따라 `init_task`까지 순회)은 동일하다.
+
+**Q28.** "process와 thread의 차이는 무엇을 공유하느냐뿐"이라는 결론을 강의는 개념적으로 어떻게 설명했나?
+
+**A28.** process = process context + (code, data, stack) 전부 자기 것. thread가 있으면 code·data·kernel context는 공유하고 stack만 스레드별로 따로 갖는다는 식으로, CLONE flag를 언급하지 않고 "무엇을 공유하는가"라는 사용자 레벨 직관으로 먼저 도입했다 (이후 소스 레벨의 CLONE_* 사슬은 이 챕터 §6에서 다룸).
+
+---
+
 ## Anki import (TSV)
 
 ```tsv
