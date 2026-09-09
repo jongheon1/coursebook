@@ -176,3 +176,19 @@ The one point in this lecture where the instructor explicitly tied the material 
 - The remaining open question, stated explicitly: "how do we actually compute the gradient $g_t$ that all these optimizers use?" — that answer is backpropagation, which he explicitly said would be covered next Wednesday.
 - The class ran without a break, and closed by noting that next Wednesday will cover backpropagation, followed by the issues in centralized training (memory/compute/delay — the Week 2 chapter's territory).
 - **In the slide deck but not covered in this lecture** (per the no-speculation policy, these are intentionally not written up here yet): the detailed derivation of backpropagation itself, overfitting and its remedies (data augmentation, L2 regularization/weight decay, dropout/dropconnect), batch normalization, and applications to other architectures like CNNs/attention. These will be added, along with an updated `delta.md`, once the lecture(s) that actually cover them are ingested.
+
+---
+
+## Day 3 (2026-09-09) — Backpropagation, Overfitting, and Regularization
+
+> Source: the same deck (`week1-02-dl-basics.pdf`), picking up backpropagation as promised last session. A brief recap of gradient descent and the optimizers opened the class.
+
+- **Finishing the backpropagation derivation**: applied the chain rule layer by layer, propagating the gradient of the final loss with respect to each layer's weights from back to front, worked through with concrete notation (e.g. $a^{(L-1)}$). The key idea: "assuming this value is already known, this one follows directly by the chain rule" — earlier layers reuse gradient values already computed at later layers (hence "back"propagation).
+- **Why split train/test**: measuring performance on the training data itself is meaningless (the model was optimized to fit exactly that data), so performance must be measured on validation/test data the model never trained on.
+- **Overfitting vs. underfitting**: worked through cross-entropy loss on the **CIFAR-10 dataset** as an example, then illustrated (via a graph) the case where a model is too complex (overfitting — training error keeps dropping while validation error eventually rises again) versus too simple (underfitting).
+- **Mitigating overfitting**:
+  - **Collect more data** — most direct, but not always feasible.
+  - **Data augmentation** — transform existing data to synthesize more.
+  - **L2 regularization (weight decay)** — add a penalty on weight magnitude to the loss function. Intuition: prevents the model from relying too heavily on any single weight. Tradeoff: too much regularization prevents the model from learning sufficiently complex patterns.
+  - **Dropout** — randomly zero out some neurons during training. Why it helps: it blocks "weird" optimization paths that rely too heavily on specific neuron combinations; the difference in behavior between training and inference time (and their actual performance comparison) was also mentioned.
+- **Closing logistics**: PyTorch materials to be uploaded to LearnUs. **Preview for Friday**: batch normalization, CNNs, and the motivation for why distributed training is needed. Next week proceeds into distributed learning proper, as originally planned.

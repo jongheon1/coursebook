@@ -176,3 +176,19 @@
 - 남은 질문으로 명시: "이 모든 optimizer가 쓰는 gradient $g_t$ 자체는 어떻게 계산하는가?" — 이 답이 backpropagation이며, 다음 수요일 강의에서 다룰 예정이라고 명시적으로 예고.
 - 강의는 쉬는 시간 없이 진행되었고, 다음 수요일부터 backpropagation과 이어서 centralized training의 이슈들(메모리/연산/지연 — Week 2 챕터 내용)로 넘어간다고 마무리.
 - **슬라이드에는 있었지만 이번 강의에서 다루지 않은 것** (추측 금지 원칙에 따라 이 노트에도 아직 넣지 않음): backpropagation 자체의 상세 유도, overfitting과 그 방지책(data augmentation, L2 regularization/weight decay, dropout/dropconnect), batch normalization, CNN/attention 등 다른 아키텍처로의 응용. 이들은 실제로 다뤄지는 다음 강의(들)에서 delta.md와 함께 갱신 예정.
+
+---
+
+## Day 3 (2026-09-09) — Backpropagation, Overfitting과 정규화
+
+> 소스: 같은 덱(`week1-02-dl-basics.pdf`), 이전 시간 예고대로 backpropagation부터 이어감. 강의 초반에 지난 시간 내용(gradient descent, optimizer들)을 짧게 복습.
+
+- **Backpropagation 유도 마무리**: chain rule을 층(layer)마다 적용해서, 최종 출력 $y$에 대한 손실로부터 시작해 각 층의 가중치에 대한 gradient를 뒤에서 앞으로 전파하는 과정을 구체적인 표기($a^{(L-1)}$ 등)로 끝까지 전개. "이 값을 이미 안다고 가정하면, 이 값은 chain rule로 바로 계산된다"는 식으로 앞 층 gradient가 뒷 층에서 계산된 값을 재사용한다는 게 핵심(그래서 "back"propagation).
+- **왜 train/test를 나누는가**: 학습에 쓴 데이터로 성능을 재는 건 의미가 없으므로(모델이 그 데이터를 이미 맞추도록 최적화됐기 때문), 학습에 안 쓴 validation/test 데이터로 성능을 측정해야 한다는 것.
+- **Overfitting vs. Underfitting**: **CIFAR-10 데이터셋**을 예로 들어 cross-entropy loss를 계산해보고, 모델이 너무 복잡(overfitting, training error는 계속 낮아지는데 validation error는 어느 순간부터 다시 올라감)하거나 너무 단순(underfitting)한 경우를 그래프로 설명.
+- **Overfitting 완화 전략**:
+  - **데이터를 더 모은다** — 가장 직접적이지만 항상 쉬운 건 아님.
+  - **Data augmentation** — 있는 데이터를 변형해서 늘림.
+  - **L2 정규화(weight decay)** — 기존 손실함수에 가중치 크기에 대한 페널티 항을 더함. 직관: 모델이 특정 가중치에 과도하게 의존하지 못하게 막는 것. 트레이드오프: 정규화를 너무 세게 걸면 모델이 충분히 복잡한 패턴을 못 배움.
+  - **Dropout** — 학습 중 뉴런 일부를 무작위로 꺼버림. 왜 도움이 되는지: 특정 뉴런 조합에 과도하게 의존하는 "이상한" 최적화 경로를 막아준다는 설명, 학습 시와 추론 시 동작 차이(및 그 실제 성능 비교)도 언급.
+- **마무리 공지**: PyTorch 관련 자료 LearnUs 업로드 예정. **금요일 강의 예고**: batch normalization, CNN, 그리고 분산 학습(distributed training)이 왜 필요한지에 대한 동기 부여. 다음 주부터는 예고된 대로 분산 학습 본론으로 들어갈 예정.
