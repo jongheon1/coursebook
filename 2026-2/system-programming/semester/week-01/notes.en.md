@@ -156,3 +156,54 @@ Wrapped up the course overview and took questions. Noted that week 1 allows free
 - The Linux kernel runs many processes at once (the professor guessed "maybe a thousand or so"), so it needs an efficient way to manage them.
 - **Doubly linked list**: each task_struct has prev/next pointers, starting from `init_task`, with other processes linked in. The kernel provides macros to insert, remove, and scan this list — e.g., `for_each_task` (follows the next-task pointer repeatedly to visit every process).
 - **The limitation, and why pidhash exists (left unfinished)**: using only the linked-list traversal to find a specific PID (say, PID 1000) directly would mean scanning sequentially from the first task up to 1,000 times — very time-wasting. "That's why the Linux kernel also maintains a hash table" (pidhash) — right after saying this, with time running short (4:46), the lecture ended. **The actual structure and lookup mechanics of pidhash were not covered in this lecture and were explicitly deferred to the following Wednesday ("process list and related things"). This note does not speculate about that content.**
+
+---
+
+## Day 3 (2026-09-09) — Process Organization, Process Switching, Threads
+
+> Source: the same slide deck (`L01-linuxprocesses.pdf`), continuing past slide 42. A brief recap of process/thread definitions, `task_struct`, and process states opened the session.
+
+### 23. Managing the Process List — Linked List + Hash Table
+
+- Two data structures the kernel uses to manage processes: a **linked list** (for full traversal/insertion/removal, via macros like `for_each_task`) and a **hash table** (for fast PID lookup — picking up exactly where last session's pidhash teaser left off, since list-only lookup is a slow sequential scan).
+- **Relationships among processes**: parent (a single pointer — each process has exactly one), children (a linked list — can be multiple), and siblings (also a linked list) maintain the hierarchy.
+
+### 24. Run Queues and Wait Queues
+
+- From the CPU's perspective, a process is either **runnable (ready/running)** or **blocked**. Two structures manage this:
+  - **Run queue**: what the CPU scheduler traverses to pick the next process to run. Each CPU/core has its own run queue, which internally keeps separate lists per scheduling algorithm (CFS, RT, DL, etc.).
+  - **Wait queue**: the set of blocked (task interruptible/uninterruptible) processes sleeping while waiting on some hardware/device/timer event. When that event occurs, the device driver or kernel subsystem wakes the process and moves it back to the run queue.
+- (In passing) the OS also assigns per-process resource usage limits (max CPU time, file size, heap/stack size, etc.) — mentioned briefly as "not that important."
+
+### 25. Process Switching — the Four Triggering Events
+
+Task switching happens in four cases:
+1. A process puts itself to sleep (runnable → blocked).
+2. A process terminates.
+3. A process is about to return to user mode from a system call, but isn't the most eligible process to run next (some other runnable process may have higher priority or lower virtual runtime — there's no reason for the kernel to insist on resuming the original one).
+4. A process is about to return to user mode after the kernel finishes handling an interrupt, and again isn't the most eligible candidate (essentially the same logic as case 3).
+- When any of these four happen, the kernel decides whether to context-switch, saves the previous process's (prev's) context, schedules the next process (next), and restores its context.
+
+### 26. Hardware Context, `thread_struct`, and the `switch_to` Macro
+
+- In Linux, both processes and threads are called "tasks" (the scheduling unit), so **"task switching" (context switching)** is the more accurate term than "process switching."
+- **Hardware context**: the register values (stack pointer, instruction pointer, etc.) the CPU needs to resume a process — these must be reloaded into the CPU registers to resume execution.
+- The hardware context is **split across two locations**: part of it lives in **`thread_struct`** inside the process descriptor (`task_struct`) — the architecture-dependent part (e.g., EIP/ESP) — and the rest lives on the **kernel-mode stack**. `task_struct` itself is architecture-independent (maintained by core kernel code), but CPU-register-related information is architecture-specific, which is exactly why it's split out into its own structure (`thread_struct`).
+- Context switching has two steps: **(1) switching the kernel-mode stack**, and **(2) switching the hardware context** — handled by the Linux kernel's **`switch_to` macro**, written in assembly for performance (recent kernels are moving parts of the codebase to Rust, but this very low-level code stays in assembly).
+- **Step-by-step walkthrough of `switch_to`**:
+  1. Save a few register values (flags, EBP, etc.) onto the previous process's (prev's) kernel-mode stack.
+  2. Save prev's stack pointer into prev's `thread_struct` — **the stack pointer itself cannot be saved on the kernel stack** (since that value is exactly what identifies where the kernel stack is — saving it inside the stack would lose track of the stack's location, which is precisely why part of the context goes to the stack and part goes to a separate global structure).
+  3. Load next's stack pointer from next's `thread_struct` into the CPU register — at this point the kernel can identify next's kernel-stack area.
+  4. The rest (notably the instruction pointer, which marks how far the process has progressed) is handled by the `__switch_to` macro, restored last.
+  - Once these steps finish, the CPU registers point to the next process's state, completing the switch.
+
+### 27. Threads — Why They Were Introduced
+
+- **Traditional model (no threads)**: resource ownership (virtual address space, process context) and execution were bundled into a single process — one process = resources + exactly one thread of execution.
+- **Modern model (with threads)**: resources and execution are separated — multiple threads share resources (address space, file handles, etc.) while each keeps its own execution flow (stack, context).
+- **Motivation**: exploiting parallelism inside an application without threads meant spawning a separate process for every part that needed to run in parallel — but processes share no address space or resources at all, making this inefficient and clumsy. Threads solve this by sharing a common context (code/data) while each thread keeps its own stack and execution context.
+- Threads are (like processes) a **unit of scheduling**; from the Linux kernel's perspective, both processes and threads are just "tasks" — the distinction is purely a matter of how much they share.
+- **Two implementation approaches**:
+  - **User-level threads**: (e.g., a custom Python/Java thread library) the kernel has no awareness of them at all — from the kernel's point of view it's still a single process (single thread). Problem: the kernel can't schedule them.
+  - **Kernel-level threads**: the kernel directly recognizes threads as a scheduling unit — the more realistic approach, in the professor's assessment. **Linux uses kernel-level threads.**
+- At 3:47, with time running short, the lecture wrapped up here, with the remaining time given to questions.
