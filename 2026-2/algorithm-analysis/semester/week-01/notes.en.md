@@ -303,3 +303,107 @@ A naive all-pairs comparison trivially gives $O(n^2)$, so the goal is to improve
 - **A subtlety in the correctness argument**: $(p_{m1}, p_{m2})$ need **not** be the true global closest pair — it only has to guarantee that "if the true answer is a cross-boundary pair, this method finds it" (since the left/right recursions already handle each half's own closest pair correctly on their own).
 - **Running-time analysis**: the merge step itself (extracting the strip + the 11-neighbor comparisons) is $O(n)$, structurally identical to Mergesort's merge step. The difference from Mergesort is the **extra sort needed to build $S_y$**, which makes the overall running time "slightly worse" than Mergesort's (the exact recurrence and final complexity weren't finished in class due to time — carried over to the next session; this note does not speculate on it).
 - The class closed with a note that a handout would be distributed next time.
+
+---
+
+## Day 4 (2026-09-11) — Master Theorem, Finishing Closest Pair, Introducing Integer Multiplication
+
+> Source: recording STT transcript (`2026-09-11-algorithm-analysis-1`, re-transcribed via whisper-1 verbose_json → paragraph-split, EN/KO bilingual; original kept under `_private/2026-2/algorithm-analysis/week-01/`). The Master Theorem section is the instructor re-deriving on the board a summary handout distributed last time (the handout file itself is not in this repo). The Closest Pair section picks up directly from Day 3's cliffhanger (`lec03.pdf`) — "the exact recurrence and final complexity were carried over to the next session." **The Integer Multiplication section has no corresponding slide deck or handout this semester at all — everything here comes purely from what was actually said in the recording, and standard treatments of integer multiplication algorithms (e.g., digit-based improved multiplication) are not pulled in, since the instructor hasn't covered them yet.**
+
+### A. Master Theorem (last session's handout, re-derived on the board)
+
+**Theorem (Master Theorem).** Let $a \ge 1$, $b > 1$ be constants and $f(n) \ge 0$. Consider the function $T(n)$, defined on the non-negative integers by the recurrence
+$$T(n) = aT(n/b) + f(n)$$
+(assume the necessary base cases are somehow provided). There are three cases.
+
+1. If $f(n) = O(n^{\log_b a - \epsilon})$ for some constant $\epsilon>0$, then $T(n) = \Theta(n^{\log_b a})$.
+2. If $f(n) = \Theta(n^{\log_b a}\log^k n)$ for some constant $k \ge 0$, then $T(n) = \Theta(n^{\log_b a}\log^{k+1} n)$.
+3. If $f(n) = \Omega(n^{\log_b a + \epsilon})$ for some constant $\epsilon>0$, and there exists a constant $c<1$ such that $a\cdot f(n/b) \le c\cdot f(n)$ for all sufficiently large $n$ (the **regularity condition**), then $T(n) = \Theta(f(n))$.
+
+**Interpretation/application caveats (explicitly pointed out in class).**
+- Since $T(n)$ is only defined on non-negative integers, $n/b$ may not be an integer — you're free to read $n/b$ as **either the ceiling or the floor**, whichever you like, as long as the recurrence holds in the form the theorem expects under that reading.
+- **The theorem is not exhaustive.** Recurrences whose subproblem size isn't of the form $n/b$ (e.g. $T(n-1)$, $T(\sqrt n)$) simply aren't covered. Even when the form does match, $f(n)$ might fit none of the three cases — the in-class example: with $\log_b a = 2$, $f(n)=n^2$ fits case 2 exactly with $k=0$ ($n^{\log_b a}\log^k n = n^2\log^0 n$), but $f(n) = n^2/\log n$ fits none of the three: case 2 would need $k=-1$, which isn't allowed; case 1 fails because for any $\epsilon>0$, $n^{\log_b a-\epsilon}$ always grows strictly slower than $n^2/\log n$, so $f(n)$ can't be $O$ of it; and case 3 fails because it would require $f(n)$ to grow a full polynomial factor faster than $n^{\log_b a}$, which $n^2/\log n$ doesn't. For such $f(n)$, the master theorem simply gives no answer.
+- Case 3's regularity condition only needs to hold **for sufficiently large $n$** (e.g. only from $n\ge10^6$ on is fine), and in practice, once $f(n) = \Omega(n^{\log_b a+\epsilon})$ holds, regularity comes along almost automatically — it's really only relevant for pathological functions.
+
+### B. Closest Pair running time (first pass): applying the Master Theorem → $O(n\log^2 n)$
+
+Rewrite Day 3's algorithm (call it **Algorithm 1**) and formalize its running time. Let $T(n)$ be the worst-case number of basic operations the recursive function performs on $n$ points.
+
+- **Base case** ($n\le3$): enumerate and compare all pairs. The exact operation count depends on the coordinates (maybe 10, 11, 12, ...), but there's always some constant $C_1$ bounding it above — $T(n) \le C_1$.
+- **Recursive case** ($n\ge4$): $L_x$ has $\lfloor n/2\rfloor$ points and $R_x$ has $\lceil n/2\rceil$, so the two recursive calls cost $T(\lfloor n/2\rfloor)+T(\lceil n/2\rceil)$; the master theorem doesn't distinguish floor from ceiling, so just write $2T(n/2)$. The rest of the work (boundary handling, computing $\delta$, extracting the strip $S$, **sorting** to obtain $S_y$, comparing 11 neighbors) is dominated — as already noted in Day 3 — by the $O(n\log n)$ sort needed for $S_y$, safely bounded above by $C_2\cdot n\log n$ for some constant $C_2>0$.
+
+$$T(n) \le 2T(n/2) + C_2\, n\log n \qquad (n\ge4)$$
+
+This is an **inequality**, so the master theorem doesn't apply directly. Define an auxiliary function $T'(n)$ with $T'(n)=C_1$ for $n\le3$ and $T'(n)=2T'(n/2)+C_2\, n\log n$ for $n\ge4$ — this time with **equality**. By induction, $T(n)\le T'(n)$ for all $n$ (trivial base case; inductive step: $T(n)\le 2T(n/2)+C_2 n\log n \le 2T'(n/2)+C_2 n\log n = T'(n)$). Since $T'(n)$ satisfies the recurrence with equality, the master theorem applies directly to it: $a=2,b=2 \Rightarrow \log_b a=1$, and $f(n)=C_2\,n\log n=\Theta(n^1\log^1 n)$ matches case 2 with $k=1$, giving
+
+$$T'(n)=\Theta(n\log^2 n).$$
+
+So $T(n)\le T'(n)=\Theta(n\log^2 n)$, i.e. $T(n)=O(n\log^2 n)$ — but note this is only an **upper bound on $T$ itself**, not a $\Theta$ (the exact $\Theta(n\log^2 n)$ growth is only established for the auxiliary $T'$). Adding preprocessing ($x$-sorting, $O(n\log n)$) still leaves the overall running time at $O(n\log^2 n)$.
+
+### C. "Lying for five minutes" — a common pitfall, and the real fix to $O(n\log n)$
+
+The instructor announced and staged a **deliberate error** ("I'm going to lie for the next five minutes, to show you a mistake many students actually make"): build a global $y$-sorted list $P_y$ once during preprocessing (cost $\Theta(n\log n)$, fine since it's one-time), and then, every time a recursive call needs $S_y$, scan **the whole of $P_y$ from start to end**, checking for each point whether it belongs to the strip $S$, copying the ones that do. One such scan is $O(n)$ (constant time per point), so preparing $S_y$ supposedly drops from $\Theta(n\log n)$ to $\Theta(n)$, making $k=0$ in master-theorem case 2 and giving $T(n)=\Theta(n\log n)$.
+
+**Where the lie hides.** The argument secretly used "$n$" for two different things: the true $n$ of the recurrence (the number of points in *that specific call's own* subproblem), versus (what the flawed version actually scanned) the number of points in the **entire original input**. No matter how small a recursive call's own subproblem is, it's still scanning a $P_y$ whose size is proportional to the full original input — so each call's real cost scales with the *original* input size, not its own subproblem size. Since the total number of recursive calls made across the whole algorithm is itself proportional to the original input size, the total cost is (number of calls) $\times$ (cost per call) $\sim$ quadratic — no improvement at all. The instructor's comment: "many students really do make this mistake" — the trap of calling both the original input size and a given recursive call's subproblem size by the same letter $n$.
+
+**The actual valid improvement.** The idea salvaged from the failed attempt is genuinely correct: "if you already have a sorted list containing every point you might care about, a single linear scan **proportional to that list's own length** is enough to extract a sorted sublist." The only problem was scanning "the entire original input" every time. So instead:
+
+- Pass each recursive call not just $P_x$ ($x$-sorted, as in Day 3) but also a **$y$-sorted list $P_y$ containing exactly the same set of points that call is working with** (invariant: any call's $P_x$ and $P_y$ are always the same point set).
+- The initial call gets the full $y$-sorted list built during preprocessing (one-time $\Theta(n\log n)$).
+- Inside a call, after splitting $P_x$ by index into $L_x, R_x$, scan **that call's own $P_y$** once, checking for each point whether it belongs to $L_x$ or $R_x$, and copying it to the end of $L_y$ or $R_y$ accordingly — this scan is proportional to that call's own subproblem size, so it's genuinely $O(n)$ ($n$ now really is the recurrence's $n$).
+- Build the strip $S_y$ the same way — a single scan of that call's own $P_y$ — **no sorting needed at all.**
+
+This makes every call's extra work (boundary handling + preparing $L_y/R_y/S_y$ + the 11-neighbor comparisons) $\Theta(n)$, giving
+
+$$T(n) = 2T(n/2) + \Theta(n).$$
+
+By master-theorem case 2 ($a=2,b=2\Rightarrow\log_b a=1$, $k=0$), $T(n)=\Theta(n\log n)$; adding preprocessing ($x$-sort plus $y$-sort, both $\Theta(n\log n)$) still leaves the **overall running time at $O(n\log n)$** — the target complexity, achieved.
+
+**Alternative: a bottom-up implementation also works.** The above is top-down (build the full $y$-sorted list once at the very top and split it downward). Alternatively, have the recursive function also **return its own subset sorted by $y$-coordinate** alongside the answer, with each call obtaining its $P_y$ by **merging** the $L_y, R_y$ returned by its two children — exactly Mergesort's merge step, run on the side (the base case simply returns its (at most 3) points sorted by $y$ directly). Either approach runs in $O(n\log n)$.
+
+**Two closing remarks (the instructor).** (1) 11 is a valid choice but not the unique or optimal one — a more careful analysis could shrink it further, not done in class. (2) This example gave the paradigm its first explicit name: **divide-and-conquer** — split into subproblems of roughly equal size (here $L_x, R_x$ differ by at most one point), solve each recursively, and the step usually requiring the most ingenuity is the **merge step** that combines the sub-solutions into the answer for the larger problem. Since it's always a recursive algorithm, the master theorem is always useful for analyzing its running time. (Divide-and-conquer examples seen so far: the $O(n\log n)$ version of maximum subsequence sum, and closest pair.)
+
+### D. A formal correctness proof for Closest Pair (Lemma 1, Lemma 2, strong induction)
+
+**Lemma 1.** If $p_i$ comes from the left half, $p_j$ from the right half, and $\mathrm{dist}(p_i,p_j) < \delta$, then $x_i, x_j \in (x^*-\delta,\ x^*+\delta)$ — i.e. both points lie in the strip $S$.
+
+*Proof.* Since $p_i$ is from the left, $p_j$ from the right, and $x^*$ is the boundary, $x_i \le x^* \le x_j$. So $x^*-x_i \le x_j-x_i$, and $x_j-x_i$ (non-negative) is at most $\mathrm{dist}(p_i,p_j)$, which by assumption is smaller than $\delta$. That gives $x^*-x_i < \delta$, i.e. $x_i > x^*-\delta$. Combined with $x_i \le x^*$: $x_i \in (x^*-\delta,\, x^*]$. Symmetrically, $x_j \in [x^*,\, x^*+\delta)$. $\blacksquare$
+
+**Lemma 2.** If $p,q \in S$ (the strip) and $\mathrm{dist}(p,q)<\delta$, then in $S_y$ ($y$-sorted), $p$ and $q$ are within 11 positions of each other.
+
+*Proof.* Tile the width-$2\delta$ strip completely with $\delta/2 \times \delta/2$ squares ("boxes") — since the strip is $2\delta$ wide, one horizontal "row" consists of $2\delta/(\delta/2)=4$ boxes. Any point sitting exactly on the boundary ($x=x^*$) is assigned, arbitrarily but consistently, to whichever box belongs to its own half.
+
+*Each box holds at most one point of $S$.* The maximum distance between two points in the same box is the diagonal, $(\delta/2)\sqrt2=\delta/\sqrt2 <\delta$. But $\delta$ is the minimum of the two recursive calls' closest-pair distances, so **no two points within the same half can be closer than $\delta$.** By the boundary rule above, every box lies entirely within one half, so any two points in the same box must come from the same half — but same-half points are at least $\delta$ apart, while any two points in the same box are less than $\delta$ apart. Hence a box can never hold two (or more) points.
+
+*Proof by contradiction.* Suppose $p,q\in S_y$ with $\mathrm{dist}(p,q)<\delta$ are at least 12 positions apart in $S_y$'s order (WLOG $p$ comes before $q$). Then $S_y$'s points from $p$ to $q$ inclusive number at least 13, and all of their $y$-coordinates lie in $[y_p,y_q]$. If the row containing $p$'s box and the row containing $q$'s box had at most one row between them, then ($p$'s row, at most one row in between, $q$'s row) span at most 3 rows $=$ at most $3\times4=12$ boxes, into which these 13 points would all have to fit — by pigeonhole, some box would have to receive two points, contradicting "at most one point per box" above. So there must be **at least two full rows** between $p$'s row and $q$'s row. Since each row has height $\delta/2$, having at least two full rows in between means (even in the worst case) $y_q-y_p \ge 2\times(\delta/2)=\delta$. But $\mathrm{dist}(p,q)\ge |y_q-y_p|$, so $\mathrm{dist}(p,q)\ge\delta$ — contradicting the assumption $\mathrm{dist}(p,q)<\delta$. $\blacksquare$
+
+**Theorem (correctness of Algorithm 1).** The recursive algorithm completed across Days 3–4 (including §C's linear-time merge) always returns a true closest pair.
+
+*Proof (strong induction on the number of input points).* **Base case** ($n\le3$): enumerating all pairs is trivially correct. **Inductive step** ($n\ge4$): by the strong induction hypothesis, $(p_{l1},p_{l2})$ is a closest pair in $L_x$ and $(p_{r1},p_{r2})$ a closest pair in $R_x$ (since $|L_x|,|R_x|<|P_x|$ — this is why strong induction is needed). Let $(p^*_1,p^*_2)$ be *a* closest pair of the whole $P_x$, and let $\delta=\min(\mathrm{dist}(p_{l1},p_{l2}),\ \mathrm{dist}(p_{r1},p_{r2}))$. Since $\delta$ is the distance of some particular pair, it's at least the global minimum $\mathrm{dist}(p^*_1,p^*_2)$.
+
+- **Case 1 ($\delta > \mathrm{dist}(p^*_1,p^*_2)$).** If $(p^*_1,p^*_2)$ were entirely within the left half, the induction hypothesis would give $\mathrm{dist}(p_{l1},p_{l2}) \le \mathrm{dist}(p^*_1,p^*_2) < \delta \le \mathrm{dist}(p_{l1},p_{l2})$ — a contradiction (symmetrically for the right half). So $(p^*_1,p^*_2)$ must be a **cross-boundary pair**, one point from each half. By Lemma 1, both lie in $S$; by Lemma 2, they're within 11 positions in $S_y$ — so when the algorithm scans $S_y$ comparing each point to its next 11, this pair is guaranteed to be examined, meaning the third candidate $(p_{m1},p_{m2})$ the algorithm finds has distance at most $\mathrm{dist}(p^*_1,p^*_2)$. But since $(p^*_1,p^*_2)$ already achieves the global minimum, it can't be beaten — so the distances are exactly equal. Returning the best of the three candidates $(p_{l1},p_{l2}),(p_{r1},p_{r2}),(p_{m1},p_{m2})$ therefore yields a pair at the true global minimum distance.
+- **Case 2 ($\delta = \mathrm{dist}(p^*_1,p^*_2)$).** One of the two recursive calls has already achieved the global optimum. If the third candidate $(p_{m1},p_{m2})$ from the $S_y$ scan is defined at all, it's simply some pair of distinct points that genuinely exist in the input, so its distance can't be smaller than the true global minimum $\delta$. So the minimum of the three candidates is still $\delta$, matching the global optimum.
+
+In both cases the algorithm's returned distance matches the true closest-pair distance, completing the induction. $\blacksquare$
+
+**Summary theorem.** Closest Pair is solved correctly in $O(n\log n)$ time using §C's linear-merge version, or $O(n\log^2 n)$ time using §B's (sort-based) simpler version.
+
+### E. Introducing Integer Multiplication (no slides/handout this semester — recorded purely from the lecture audio)
+
+**Motivation.** Treating addition, subtraction, multiplication, and division as constant-time operations is an assumption of the RAM (random access machine) computation model — a good approximation of real hardware with a fixed word size (e.g. 64-bit): native arithmetic instructions return in constant time, and any memory address can be accessed, assigned to, or compared in constant time as well. But for applications needing arithmetic on integers far larger than the machine word (the in-class example: multiplying two $64k$-bit integers), you have to **implement** multiplication of such large integers out of fixed-size elementary operations — so the RAM model is no longer a valid approximation at that scale, and integer multiplication itself has to be treated as an algorithm to design and analyze, rather than a constant-time primitive.
+
+**Problem statement.** Given two positive integers $p, q$, compute $p\cdot q$.
+
+**The naive algorithm presented** (implementing multiplication purely via addition):
+```
+ans ← 0
+for i ← 1, …, p do
+    for a ← 1, …, q do
+        ans ← ans + 1
+return ans
+```
+Correctness is obvious (repeating a unit increment $p\times q$ times yields $p\cdot q$). Running time is $\Theta(p\cdot q)$ — the instructor wrote this as $O(p,q)$ for convenience (a bound in terms of the two separate arguments). **The instructor explicitly flagged an objection to even this running-time approximation but deferred it** ("I have an objection, but I'm not going to talk about it yet") — what the objection actually is wasn't stated at this point (this note does not speculate).
+
+**The efficiency question, and an open cliffhanger.** Applying Day 2 §16's definition of "efficient algorithm" (running time bounded by a polynomial in input size) at face value, $O(p,q)$ looks polynomial in $p$ and $q$, so it seems efficient. In a class poll, a sizable number of students voted "not efficient," and the instructor explicitly confirmed: **"the answer is no, it's not efficient, even under our own definition"** — but **explicitly deferred the reason to the next lecture.** (This note does not speculate here — the standard explanation for why an apparently-polynomial bound turns out not to be efficient, e.g. measuring input size by number of digits rather than by value, is not pulled in until it's actually covered in class.)
+
+**Note (instructor's preview).** Integer Multiplication, like the examples seen so far (the $O(n\log n)$ maximum-subsequence-sum algorithm, closest pair), was explicitly previewed as another problem to be tackled via **divide-and-conquer** — the concrete divide-and-conquer algorithm itself has not been presented yet.

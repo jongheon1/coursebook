@@ -192,3 +192,115 @@ The one point in this lecture where the instructor explicitly tied the material 
   - **L2 regularization (weight decay)** — add a penalty on weight magnitude to the loss function. Intuition: prevents the model from relying too heavily on any single weight. Tradeoff: too much regularization prevents the model from learning sufficiently complex patterns.
   - **Dropout** — randomly zero out some neurons during training. Why it helps: it blocks "weird" optimization paths that rely too heavily on specific neuron combinations; the difference in behavior between training and inference time (and their actual performance comparison) was also mentioned.
 - **Closing logistics**: PyTorch materials to be uploaded to LearnUs. **Preview for Friday**: batch normalization, CNNs, and the motivation for why distributed training is needed. Next week proceeds into distributed learning proper, as originally planned.
+
+---
+
+## Day 4 (2026-09-11) — Batch Normalization, CNNs, Issues in Centralized Training
+
+> Source: two lecture-audio STT files from 2026-09-11 (one continuous recording session, in chronological order) + slides. The first file finishes off the remainder of the `week1-02-dl-basics.pdf` deck (batch normalization, CNNs) as promised last session. At t=2163 the instructor explicitly announces "the title of this lecture note is Issues in Centralized Training" and switches to a completely new deck — **this new deck was covered start to finish in this single class, from its introduction through its conclusion (next week's preview).**
+
+### 18. Batch Normalization — Motivation
+
+- Brief recap of everything covered so far: defining the loss function → gradient descent → backpropagation to compute gradients → mitigating overfitting (regularization, dropout). Today adds one more concept on top: batch normalization.
+- **Motivation derived via example**: predicting house price from inputs (house size, number of rooms).
+  - (1) **Within a single mini-batch**, different input features can have different scales/ranges — a large-scale feature risks dominating training. Normalizing lets both features contribute more equally.
+  - (2) **Across mini-batches**, scales can also differ (e.g. one mini-batch's values are much larger than another's) — without normalization, a large-scale mini-batch can dominate and destabilize training.
+  - (3) Value ranges can also differ **across layers** of the network, letting certain neurons/layers dominate.
+- These three observations motivate normalizing the input to each hidden layer, done on a mini-batch-by-mini-batch basis — the core idea of batch normalization.
+- **Caveat**: even the original paper doesn't give a fully clear theoretical explanation for why it works, and recent papers are still trying to explain it — there's no universally agreed theory. The motivation above is only an intuitive account.
+
+### 19. Batch Normalization — Mechanics ($\mu$, $\sigma$, $\gamma$, $\beta$)
+
+- Without normalization, a single neuron computes: input $x_k$ → weighted multiply-sum → $z_k$ → non-linear activation. Batch norm **leaves the computation of $z_k$ unchanged** and inserts a normalization layer before $z_k$ goes through the non-linear activation.
+- **Normalization procedure**: for one mini-batch ($B$ samples, $k=1,\dots,B$), compute $z_k$ for every sample → compute the mini-batch mean $\mu$ and variance $\sigma^2$ → $\hat z_k = (z_k - \mu)/\sigma$. This puts all values in a statistically similar range.
+- **It doesn't stop there — introducing $\gamma, \beta$**: rather than feeding the normalized $\hat z_k$ directly into the activation function, batch norm feeds in a **scaled-and-shifted** version, $\gamma \hat z_k + \beta$. $\gamma$ and $\beta$ are **trainable parameters** that exist per neuron — using batch norm means training additional parameters on top of the original model parameters $W$.
+- **Why scale/shift at all**: the intuition is that forcing a fixed normalized range (mean 0, variance 1) isn't guaranteed to be optimal. Making $\gamma, \beta$ learnable gives each neuron the flexibility to have training automatically find its own best normalization range — more room for improvement.
+- $\gamma, \beta$ are also **updated via backpropagation** (though their backprop equations differ in form from $W$'s, and the derivation wasn't covered). The key point is that this is easy to implement — even without fully understanding the mechanism, you can just add these layers and run backprop, and $\gamma, \beta$ get learned automatically.
+
+### 20. Batch Normalization — Training vs. Inference
+
+- **The problem**: once training finishes, $\gamma, \beta$ are fixed, but how do you define $\mu, \sigma$ at inference time? Test samples usually arrive one at a time, so there's no way to compute "mini-batch statistics" on the spot (unless multiple test samples are fed in together).
+- **The fix**: during training, take a **moving average** of the $\mu, \sigma$ values computed across mini-batches, fix that value, and reuse it at inference along with the trained $\gamma, \beta$.
+- **Effect**: batch normalization makes training substantially more stable and faster (in the lecture's plot, the blue curve = with batch norm, orange = without — blue is clearly more stable). It does have limitations, and mini-batch-independent alternatives — **group normalization, layer normalization** — were mentioned (not covered in detail, since understanding batch norm makes them easy to infer).
+
+### 21. CNNs — the Convolution Operation
+
+- Background: backprop has been covered so far using fully-connected layers, but other well-known architectures exist, like CNNs and attention/transformers. This lecture covers CNNs only at a high level (understanding CNNs isn't central to this course, but they'll come up as examples later, hence this background).
+- **Basic idea**: a filter (kernel) is placed over an image and scans across it to extract what information it contains. The filter/kernel is the CNN's **model parameter**.
+- **The 2D convolution operation**: place the filter at one position on the image, take an element-wise product and sum (a weighted sum) to get a single output value → slide the filter over → repeat the same computation → fill in the entire output feature map.
+- **Using multiple filters**: analogous to having multiple neurons in a fully-connected layer, using multiple filters (e.g. a blue filter and a red filter) means each filter independently scans the image to produce its own output, and stacking these gives an output with depth. **Output depth = number of filters** (the same logic as adding more neurons increasing a fully-connected layer's output dimension). A non-linear activation follows, just as in the fully-connected case.
+- **Multi-channel input (e.g. RGB)**: real images typically have 3 RGB channels → input depth = 3. In that case **the filter's depth must match the input depth** (e.g. depth 3). Even with depth 3, this still counts as a "single" filter (convolution is applied per R/G/B channel, then the three results are summed into one value) — **output depth is determined by the number of filters, not by filter depth**.
+- **General case (multi-channel input + multiple filters)**: with input depth 3, each filter's depth must also be 3, but using 2 filters produces one result per filter (filter 1's result, filter 2's result), stacked into a final output depth of 2. The core rule: **filter depth is matched to input depth, while output depth is determined by the number of filters.**
+
+### 22. CNNs — Overall Architecture, Pooling, and Training
+
+- The big picture: stack (convolution + non-linear activation) blocks across multiple layers (the same logic as stacking layers in a fully-connected network), then attach a fully-connected layer at the end for the final prediction (e.g. classification).
+- **Max pooling**: an operation unique to CNNs that compresses information — a mask operation that picks a value (max) or averages values over a region. Purpose: (a) reduces computational burden, (b) makes the model somewhat invariant to small rotations and local distortions — a heuristic established from experience. The convolution + non-linearity + pooling block is repeated multiple times.
+- **Why "local" processing makes sense**: each object in an image is highly localized, so nearby pixels are more correlated than distant ones — hence it's reasonable for a filter to process only neighboring pixels together.
+- **Training is exactly the same as for fully-connected networks**: forward propagation → compute the loss → backpropagation to compute the gradient → update via mini-batch SGD/momentum/RMSProp/Adam, etc. The specific backprop equations change to match the architecture (the convolution operation), but the procedure itself doesn't change — **only the architecture differs**. Overfitting remedies (dropout, weight decay) and batch normalization also apply equally to CNNs.
+- This wraps up the "basics of deep learning" portion (DNN structure, loss function, optimizers, backpropagation, overfitting remedies, batch normalization, and CNNs as a representative architecture). Transformers will be introduced with background as needed later in the course.
+
+---
+
+**(New deck begins here: "Issues in Centralized Training" — t=2163)**
+
+### 23. Issues in Centralized Training — Definition and Motivation
+
+- The instructor opens the new lecture note by emphasizing that all the deep-learning background built up so far was preparation for understanding this problem (and the distributed training to come next week) technically.
+- **Definition of centralized training (for this course)**: training where the model and dataset both live on a **single GPU / single machine**.
+- **Motivating the problem**: model sizes are growing faster than GPU memory, making it hard or outright impossible to train very large models on a single machine (out-of-memory). Large datasets also add burden not just in memory but in computation and delay.
+- **On-device training example**: mobile AI hardware such as Qualcomm's or Apple's has far less memory than expensive server-grade GPUs, so the gap between model size and available memory is even larger — on-device training is a particularly hard version of this problem.
+- Conclusion: large models plus large datasets are the fundamental issue in centralized training, and **distributed training is one direction for closing this gap** (introducing multiple machines to train collaboratively).
+
+### 24. The Three Key Metrics: Memory, Computation, Delay
+
+- Stated explicitly in answer to a student's question: the key metrics for looking at issues in centralized training are **memory, computation, and delay**.
+- Memory further splits into two: **parameter memory** and **activation memory** — explained in order below.
+
+### 25. Parameter Memory
+
+- Motivating question: if a GPU has 96GB and the model is 120GB, OOM is obvious. But **even an 80GB model, smaller than a 96GB GPU, often still fails to train** — parameter memory is one reason why.
+- **SGD**: with $m$ model parameters, the gradient also has $m$ elements (assuming the whole model is updated) → model + gradient ≈ $2m$.
+- **SGD with Momentum**: model + gradient + a momentum buffer of the same dimension → ≈ $3m$.
+- **Adam**: keeps the momentum-like term, RMSProp's $v_t$ term, the weights, and the gradient all simultaneously → ≈ $4m$ (assuming momentum, $v_t$, weights, and gradient all share the same dimension).
+- **Counting parameters**: a linear layer has (input dim $c_i$) × (output dim $c_o$) parameters; a conv layer has (number of filters $c_o$) × $c_i \times k_h \times k_w$ ($c_i$ = input channels, $k_h, k_w$ = filter height/width).
+- **Model size = number of parameters × bit width**. Worked example (including a Q&A): with 61 million parameters stored as 32-bit floats, model size ≈ 244MB (61M × 4 bytes). The memory needed per optimizer then scales as **SGD 244×2, SGD+Momentum 244×3, Adam 244×4 (MB)**. Quantizing to 8-bit, etc. reduces total storage but it's still proportional to the parameter count.
+- **Two key takeaways**: (1) a GPU with more memory than the model size doesn't guarantee training will fit — because of the gradient and optimizer state. (2) A more complex optimizer (SGD < Momentum < Adam) needs more memory — which is why a model that OOMs under Adam can sometimes run fine under plain SGD.
+- Parameter memory is **proportional to model size** and **independent of mini-batch size or dataset size** — the key contrast with activation memory, discussed next.
+
+### 26. Activation Memory
+
+- A **less intuitive** concept than parameter memory, requiring a revisit of how backpropagation is structured.
+- **Defining the number of activations**: for a single input sample, the number of activations at a layer equals that layer's number of output neurons (e.g. input 5 → layer 1 output 4 → layer 2 output 3 → layer 3 output 2). **When mini-batch SGD stacks $n$ samples into a tensor**, each layer's activation count scales up by $n$ (e.g. 4n, 3n, 2n). The same holds for conv layers: per-sample activation count is $c_o \times h_o \times w_o$, multiplied by $n$ for a batch of size $n$.
+- **Why activations must be stored (the link to backprop)**: in forward propagation, layer $L$'s computation takes $a^{(L-1)}$ (the previous layer's activation, a matrix of "input dimension × batch size") through weights $W$ to get $z$ → non-linear activation → $a^{(L)}$. **Computing the gradient of that layer's weights via backpropagation requires $a^{(L-1)}$ (that layer's input activation), by the chain rule.**
+- **No problem for inference alone**: during inference (forward propagation only), once $a^{(L)}$ is obtained from $a^{(L-1)}$, $a^{(L-1)}$ can be discarded immediately (it's not needed for anything downstream) — this repeats all the way to the final output, discarding earlier activations along the way.
+- **Cannot discard immediately during training**: since computing each layer's gradient during backpropagation needs that layer's input activation from the forward pass, **all intermediate activations $a^{(L-2)}, a^{(L-1)}, a^{(L)}, \dots$ must be kept until forward propagation finishes** (more precisely, until that layer's backward pass is done). Backward passes run from the output side toward the input side, and once a layer's gradient computation finishes, the activation it used can be discarded — in order, starting with the one closest to the output.
+- **Why it's a bottleneck**: the more layers a model has, or the more neurons per layer, the larger the total activation storage needed (→ **a component proportional to model size**). At the same time, each layer's activation dimension **scales with mini-batch size** — e.g. a mini-batch of 1,000 makes the activation dimension 1,000× larger than processing a single sample.
+- **Conclusion**: activation memory is simultaneously proportional to both model size and mini-batch size (summed across all layers). This is why **training memory is much larger than inference memory** — training needs activation memory on top of parameter memory. This connects directly to real experience: the same model that OOMs at a mini-batch size of 112 can often train fine once the batch size is reduced to 8 or 16.
+- **Mitigation strategy (mentioned only, not detailed)**: instead of keeping every activation, store only some and recompute the rest when needed — **recomputation (activation checkpointing)**, trading memory for extra computation.
+- Parameter memory and activation memory don't add up exactly (other memory components exist too), but these two are the primary bottlenecks people try to reduce. When later covering distributed training techniques, the instructor previewed that each technique will be framed in terms of whether it reduces parameter memory or activation memory (e.g. splitting the model across machines reduces both per-machine parameter memory and activation memory; splitting only the dataset across GPUs leaves parameter memory unchanged but reduces activation memory).
+
+### 27. Computation Metrics — MAC and FLOPs
+
+- **MAC (Multiply-Accumulate) operations**: a common operation in a network's forward propagation — one multiplication paired with one accumulation. For a fully-connected layer's forward propagation with input dimension $c_i$, output dimension $c_o$, and mini-batch size $N$, the number of MAC operations is of the form $N \times c_i \times c_o$. More complex structures like CNNs require more MACs, but the detailed derivation wasn't covered.
+- **FLOPs (Floating Point Operations)**: a more general, more intuitive metric that treats every arithmetic operation — addition, subtraction, multiplication, division — equally (one operation = one FLOP). One multiplication = 1 FLOP, one addition = 1 FLOP, so a single MAC (multiply + accumulate) = 2 FLOPs.
+- Backpropagation's computational cost (in FLOPs) is roughly 2x that of forward propagation (mentioned via a reference link, not derived in detail).
+- **Why FLOPs is the standard metric in papers**: it's a **formal** metric independent of any specific hardware, reflecting the computational burden of the algorithm/model itself — which is why research papers arguing for computational efficiency typically report FLOPs (though counting FLOPs precisely during training is harder than during inference).
+
+### 28. The Delay (Latency) Metric
+
+- Another way to measure computational burden is to **measure actual delay on a given piece of hardware** — measuring algorithm A's and algorithm B's delay on the same GPU, and calling whichever takes less time "more computationally efficient." This is easier to measure than FLOPs but has a key limitation: it's **hardware-dependent** — a slow machine can make the gap between two algorithms look larger, while a fast machine might show almost no difference. That's why FLOPs is treated as the more formal metric.
+- Latency is determined by both (a) **algorithm/model-side factors** — model size, output activation size, which optimizer is used — and (b) **hardware-side factors** — the processor's operations-per-second throughput, memory bandwidth. Formally modeling this delay is always hard, and the course doesn't need to model it formally — the goal is simply to make training faster in practice (on a single or multiple machines). Some hardware researchers pursue hardware-algorithm co-optimization.
+- As with memory, **larger models or larger datasets/mini-batch sizes increase both computation (FLOPs/MAC) and latency**.
+
+### 29. Q&A — Model Size, Trade-offs, and "No Universal Answer"
+
+- **Q: How large should a model ideally be?** A: it depends on the target application. For a strong, general-purpose foundation model, people try to keep growing it as much as possible, but at some point performance can stop improving — even with data continuously being generated, growing the model indefinitely risks overfitting and worse performance unless data volume keeps pace (mentioned as the reason OpenAI keeps collecting data from users — exactly how it's used isn't known, but it's presumably used to keep improving the model). Conversely, for a specific target task far less complex than what OpenAI builds, an infinitely large model isn't needed — the right size has to be found empirically. Also, **architecture choice sometimes matters more than raw size** — e.g. Transformer-based architectures have contributed significantly to performance gains.
+- **Q: How much memory margin above model size is actually needed to make training feasible?** A: there's no universal answer — it depends on the mini-batch size and choice of optimizer (mentioned example: even 20GB or 10GB-class models have caused OOM issues in the instructor's own lab). In practice this is approached by trial and error, but the principles learned narrow down the options: reduce the mini-batch size, reduce the model size, or use a simpler optimizer (e.g. SGD instead of Adam). **If keeping the model size fixed matters most for a task**, simplify the optimizer and reduce the mini-batch size; **if keeping the mini-batch size fixed matters most**, simplify the optimizer and reduce the model size instead.
+- **General remark**: much of machine learning (why batch normalization works, why Adam performs well, etc.) still has **no definitive answer and relies on experience/heuristics**, and remains an active area of theoretical research (mentioned that math-plus-ML courses in the department go deeper into this theoretical background).
+
+### 30. Conclusion and Next Week's Preview
+
+- Recap of today's issues in centralized training: **memory issues** (parameter memory + activation memory), **computation issues** (MAC/FLOPs), and **delay issues** — all stemming from the fundamental problem that models and datasets are large while a single machine's memory, compute, and time are limited.
+- **Next week's preview**: moving directly into distributed training techniques to mitigate these problems. Next week covers **data parallelism** (parallelizing over data without splitting the model); **week 4** covers strategies for splitting the model across machines (model-parallelism approaches). **DeepSeek** was mentioned as a concrete example — DeepSeek's training combined data parallelism with several model-parallelism strategies to reduce memory issues and speed up training.
+- The class ran without a break and closed here.

@@ -177,4 +177,82 @@ This section is the professor's brief recap of a student presentation on a paper
 
 - Covered this session: motivation for real-time systems, their definition, application examples, the relationship among embedded systems / cyber-physical systems (CPS) / real-time systems, and research topics in the field.
 - The professor noted that students already had a reasonable intuition for the deadline-centric definition of real-time systems going in.
-- **Gap to flag**: the precise relationship diagram among embedded systems / CPS / IoT / real-time embedded systems (Note02 pp. 12, 20–27), and the specific research-topic examples (Note02 pp. 28–34: CPS design challenges, soft real-time timing guarantees, minimizing battery aging, multi-DNN task execution, etc.) were not clearly walked through slide-by-slide in this recording — most of the session's time went to the guest talk (DNN-SAM) instead. Rather than reconstruct those slides' content from the notes alone, refer directly to the original deck (`Lecture_Note02.pdf`).
+- **Continued below**: this (2026-09-08) session spent most of its time on the guest talk (DNN-SAM), so the precise relationship among embedded systems / CPS / IoT / real-time embedded systems (Note02 pp. 12, 20–27) and the specific real-time-systems research topics (Note02 pp. 28–34) were not walked through slide-by-slide. That material was covered in a later session (2026-09-10, "Embedded Systems, CPS/IoT & Research Topics") and is written up in **sections 10–12** below.
+
+## 10. [Day 3] "Real-time ≠ fast": revisiting timeliness and predictability
+
+> Source: 2026-09-10 lecture recording (a third session; recap project result document `2026-09-10-real-time-systems-1.json`, titled "Embedded Systems, CPS/IoT & Research Topics"). This session actually covered the Note02 material flagged as missing in section 9 — the embedded-systems/CPS/IoT relationship (pp. 12, 20–27) and the research-topics slides (pp. 28–34); see sections 10–12 below. This recording also has an incompletely-recovered stretch (especially the opening of section 11.1, t≈1200–1800) due to audio quality and context.
+
+- **Opening — CPS examples**: the professor expects the number of CPS research groups/projects to keep growing, citing autonomous vehicles, medical devices (hospitals/ICUs), and small drones as examples.
+- **Drone example — how "a little delay" compounds**: if drones need to move immediately but two successive 0.1-second delays occur, the resulting position error can reach 1.5 meters — illustrating why temporal **consistency** matters.
+- **Space-time metaphor**: a conveyor belt unboxing items on a timing schedule — when the belt moves defines the system's "space-time."
+- **Definition, restated**: a real-time system has a **temporal aspect** as well as a **functional aspect**. Missing the deadline makes an otherwise functionally correct result meaningless — the system won't treat that result as valid.
+- **Timeliness as the performance measure**: general-purpose systems are usually measured by speed or average-case performance, but these matter less for real-time systems. The term the professor favors is **timeliness**.
+- **System A vs. System B example** (x-axis: number of samples, y-axis: response time):
+  - System A: average ~25 (units/sec), maximum 1.5.
+  - System B: average ~16, maximum 15–16.
+  - From a real-time-systems standpoint, **System B is better** — it's **more predictable** (a student's answer: "time-critical").
+  - But the right answer depends on the deadline: with a deadline of 70, System A is bad — it's fine most of the time, but a single miss (e.g., a missed object detection) can be catastrophic. With a deadline of 150, both meet the deadline, so the next criterion becomes average performance, making **System A better**. In other words, **there's no single right answer** — it depends on the system and its deadline.
+- **A physical constraint that becomes the deadline**: if the car ahead stops and the gap is 2 meters, at the current speed you have only one second to stop — that physical situation (speed, distance) *is* the **time constraint**.
+  - **The loop that implements the deadline**: acquire sensor data → **object detection** (perceive obstacles) → **planning** (including localization and tracking; decide to slow/speed/turn) → **control** (operate the brake pedal, release steering) to actually move the car. If the whole loop must finish within one second, each stage (especially planning) must finish well under that — a **timing constraint imposed by the physical world**.
+- **Correcting the misconception: "fast" is not "real-time."** One of this session's key messages: many students come in believing a fast system is (or is what makes) a real-time system — that's wrong.
+  - **Metaphor (swimming in a river)**: a person swims in a river with an average depth of 20cm. If the actual depth were exactly 20cm everywhere, drowning would make no sense. But that's just the **average** — the river is 20m long, and some stretch can be far deeper, so the person can still drown.
+  - **Lesson**: a real-time system isn't "fast on average" — it has **predictability**. Example: a system from 20 years ago that can guarantee every request finishes within 60 time units has **time predictability**. Conversely, an average response time of 2 units is very fast, but if the worst case is unpredictable, that's not the property a real-time system wants.
+  - The professor's favorite phrasing: **"predictable rather than fast."**
+- **Hard/Soft/Firm, revisited**: firm real-time has a firm time constraint before the deadline but is not hard real-time — the same three-way classification from sections 3–4, now explained a third time (the professor's own count) with different examples.
+- **The "every system is self-predictable" claim, revisited (same argument as section 4)**: if a task on your smartphone took a year to finish, that wouldn't count as "working" → the utility/gain from a result decreases with elapsed time, so every system can be viewed as real-time-related in that sense. The professor adds that, in that sense, we never really have a purely hard/firm real-time system in an absolute sense — while immediately hedging that he's "not sure that makes sense."
+
+## 11. [Day 3] Embedded-systems architecture and the CPS/IoT/real-time-systems relationship (maps to Note02 pp. 12, 20–27)
+
+### 11.1 Embedded-systems examples and constraints (medicine vs. automotive; a Korean research-funding anecdote)
+
+- **A Korean research-funding-history remark (STT uncertain)**: the professor showed a term on a slide (the exact term isn't recoverable from the STT) and said "about 10 years ago, every research proposal in Korea included something like this," giving students a few minutes to think about its meaning. He then asked whether students knew the terms "real-time hypothesis" and "side effect" — but exactly how this connects to the embedded-systems discussion that follows isn't recoverable due to recording quality. **This is plausibly the same thread as the later CPS naming history (see 11.4) — a domestic Korean term that was popular before "CPS" — but that can't be confirmed.**
+- **Brainstorming embedded-system examples**: the first example is **medicine** — embedded systems are common in healthcare — followed by a reminder of the embedded-system definition (a device combining a computer, processor, memory, etc. for a dedicated function) and the question "what's the opposite domain?"
+- **Leads into automotive/EV** (the exact transition is unclear from the STT): a personal anecdote about a wireless charger — an **EV/mobile wireless-charging episode** where the device kept vibrating without actually charging properly. This leads into the point that people assume mobile devices will just work, but temperature is not irrelevant — automotive embedded systems must withstand large swings, from **Alaska-cold** to **Africa-desert-hot** environments.
+- **More automotive-domain constraints**: many vehicles on the road need more power and more charging stations; **water/oceans** are mentioned as another domain for embedded systems; safety requirements for vehicles are mentioned (not just a US-specific requirement).
+- **Cost sensitivity (the key point)**: a car company saving even one cent to five dollars per unit matters a great deal — **because production volume is enormous** (e.g., if a controller is produced a million units a day, saving one cent per unit adds up to a huge sum). **Cost really matters.**
+
+### 11.2 General-purpose computer vs. embedded-system architecture
+
+- **General-purpose computer (simplified)**: a computing unit + memory + output + cache.
+- **Embedded system (simplified)**: sensor(s) → (with the physical environment in between) → actuator, plus a controller, more sensors, and an **A/D converter** (converting results back to analog to act on the physical world).
+- Embedded systems must be designed within constraints — **power, size, weight, and timing** — and be more efficient than general-purpose systems.
+
+### 11.3 The real-time/embedded relationship, and industry/career
+
+- **Most (not all) real-time systems are embedded systems** — why the term "real-time embedded system" is so common.
+- However, many of the real-time-system examples covered in class (sections 3, 6) are "not necessarily embedded," since an embedded system is typically **embedded within the operation of some machine**. In other words, **real-time and embedded overlap, but neither is a strict subset of the other.**
+- A real-time system is **optimized for more than just functional correctness** — it accounts for more than an initial functional proof, which is what sets it apart from "merely embedded."
+- **Industry/career**: the embedded-systems market is growing fast (the professor notes his figures are somewhat outdated). Industries hiring embedded/real-time-systems engineers include: **autonomous systems, telecommunications, consumer electronics, defense and weapons systems, manufacturing software, aerospace, and venture companies.**
+
+### 11.4 Defining cyber-physical systems (CPS) and their naming history
+
+- **Physical** = physical things (cars, robots, etc.). **Cyber** = computing power, control, planning, calculating.
+- **Wikipedia definition (quoted directly)**: "CPS is a system of correlated computational elements controlling physical elements." Today, precursor CPS can be found across **aerospace, automotive, chemical processes, civil infrastructure, energy, healthcare, manufacturing, transportation, entertainment, and consumer appliances.**
+- CPS is broad enough to cover essentially **every engineering/science field** (materials → physical; mechanical engineering's need for control → cyber) — it's fundamentally an **interdisciplinary** area.
+- **Naming history**: the term "CPS" emerged in the US roughly 15+ years ago. Around that time in Korea, a **different term was much more popular** than CPS (possibly connected to the research-funding anecdote in 11.1, though the exact term is not confirmable from the STT). Today in the US, phrases like "I'm a CPS guy" or "my work is CPS research" are common in research proposals.
+
+### 11.5 Defining IoT, and the CPS-vs.-IoT relationship
+
+- **IoT's core idea**: **connection/connectivity**.
+- **Wikipedia definition (quoted)**: "IoT is a network of physical things, embedded with electronics, software, and sensors, that enable objects to exchange data with production, operators, and other connected devices" — built on network infrastructure.
+- **CPS vs. IoT**: the two overlap heavily and are quite similar, but **IoT focuses on connectivity** while **CPS focuses on the relationship (control) between computing and the physical world** — that's the key difference.
+- **A disputed relationship**: CPS researchers often claim IoT is a **subset** of CPS. **The professor (a CPS researcher himself) disagrees** — he sees it as closer to an **intersection** than a strict subset.
+- **The real-time-systems community sits closer to CPS** — real-time-systems research is, in the professor's framing, more closely aligned with the CPS community/problem space than with IoT.
+
+## 12. [Day 3] Real-time-systems research topics (maps to Note02 pp. 28–34): time-predictable design and timing analysis
+
+- Presented as the professor's own personal classification: real-time-systems research can be grouped into a few broad topics.
+- **Research topic 1 — time-predictable design**:
+  - Assumes the standard CS layering (hardware → architecture → programming language → application).
+  - Research exists at every layer on "how to achieve time predictability" — e.g., building applications at one layer, or designing an efficient architecture at another.
+- **Research topic 2 — timing analysis / analyzability**:
+  - Premise: someone designs a system with no regard for timing at all ("here's my system"), and this line of research **analyzes that system after the fact from a timing perspective**.
+  - Goal: determine, e.g., "how long does this task take to finish," making the real-time system **analyzable** and its timing visualizable.
+- **A concrete example for topic 2 — caches and worst-case analysis**:
+  - Question: "is a cache good for average performance?" → well known to be **yes** (memory access is much slower than cache access, so a higher cache hit rate greatly improves average performance).
+  - But: "is a cache also good for the **worst case**?" → **a 100% cache hit rate is impossible** — misses will occur in some cases regardless.
+  - **The key argument**: from a worst-case standpoint, execution can converge on the path where the cache misses and main memory is accessed anyway — raising the provocative question: "if the worst case always looks like this, might we as well remove the cache entirely, since main memory gets accessed either way?"
+  - **Caveat**: the professor is explicit that he's **not** actually arguing to remove all caches — this example is meant only to build intuition that **average-case optimization (caching) and worst-case predictability (time-predictable design) don't necessarily point the same direction**. He notes that real systems/research supporting **time-predictable caches** do exist (deferred to the next Tuesday's class for lack of time).
+  - The takeaway framing for this session's research-topics introduction: not just **cache hit rate**, but other topics like **scheduling** can likewise be understood through the tension between "optimizing average performance" and "guaranteeing worst-case predictability."
+- (The session closes noting this topic will be covered in more depth the following Tuesday.)

@@ -192,3 +192,115 @@
   - **L2 정규화(weight decay)** — 기존 손실함수에 가중치 크기에 대한 페널티 항을 더함. 직관: 모델이 특정 가중치에 과도하게 의존하지 못하게 막는 것. 트레이드오프: 정규화를 너무 세게 걸면 모델이 충분히 복잡한 패턴을 못 배움.
   - **Dropout** — 학습 중 뉴런 일부를 무작위로 꺼버림. 왜 도움이 되는지: 특정 뉴런 조합에 과도하게 의존하는 "이상한" 최적화 경로를 막아준다는 설명, 학습 시와 추론 시 동작 차이(및 그 실제 성능 비교)도 언급.
 - **마무리 공지**: PyTorch 관련 자료 LearnUs 업로드 예정. **금요일 강의 예고**: batch normalization, CNN, 그리고 분산 학습(distributed training)이 왜 필요한지에 대한 동기 부여. 다음 주부터는 예고된 대로 분산 학습 본론으로 들어갈 예정.
+
+---
+
+## Day 4 (2026-09-11) — Batch Normalization, CNN, Issues in Centralized Training
+
+> 소스: 2026-09-11 강의 녹음 STT 2건(같은 시간대에 이어진 녹음, 시간순) + 슬라이드. 첫 번째 파일은 지난 시간 예고대로 `week1-02-dl-basics.pdf` 덱의 남은 부분(batch normalization, CNN)을 마무리한다. t=2163부터 교수가 "이 강의 노트의 제목은 Issues in Centralized Training"이라고 명시적으로 선언하며 완전히 새로운 덱으로 전환한다 — **이 새 덱은 이번 한 번의 수업에서 도입부부터 결론(다음 주 예고)까지 전부 다뤄졌다.**
+
+### 18. Batch Normalization — 동기 (Motivation)
+
+- 지난 시간까지 배운 것 요약 복습: loss function 정의 → gradient descent → backpropagation으로 gradient 계산 → overfitting 완화(regularization, dropout). 오늘은 여기에 batch normalization을 하나 더 추가.
+- **동기를 예시로 도출**: 집값 예측 문제(입력: house size, number of rooms).
+  - (1) **한 mini-batch 안에서** 서로 다른 입력 feature가 서로 다른 스케일·범위를 가질 수 있다 — 스케일이 큰 feature가 학습을 지배(dominate)할 위험. 정규화하면 두 feature가 비슷한 비중으로 학습에 기여하게 만들 수 있다.
+  - (2) **mini-batch 간에도** 스케일이 다를 수 있다(예: 첫 mini-batch 값들은 크고 두 번째는 작음) — 정규화하지 않으면 스케일이 큰 mini-batch가 학습을 지배해 훈련이 불안정해진다.
+  - (3) 신경망의 **layer마다도** 값의 범위가 달라질 수 있어 특정 뉴런·layer가 지배적이 될 수 있다.
+- 이 세 가지 관찰이 "각 hidden layer의 입력을 (mini-batch 단위로) 정규화하자"는 batch normalization의 동기.
+- **주의**: 원 논문도 "왜 되는지"에 대한 명확한 이론적 설명을 주지 않으며, 최근 논문들도 여전히 설명을 시도하는 중 — 보편적으로 합의된 이론은 없다. 위 동기는 어디까지나 직관적인 설명일 뿐.
+
+### 19. Batch Normalization — 메커니즘 ($\mu$, $\sigma$, $\gamma$, $\beta$)
+
+- 정규화가 없을 때 뉴런 하나의 계산: 입력 $x_k$ → 가중치 곱+합산 → $z_k$ → 비선형 activation. Batch norm은 **$z_k$를 계산하는 방식은 그대로 두고**, $z_k$가 비선형 activation을 통과하기 전에 정규화 층을 하나 끼워 넣는다.
+- **정규화 방법**: 하나의 mini-batch($B$개 샘플, $k=1,\dots,B$)에 대해 $z_k$를 전부 계산 → 그 mini-batch 기준 평균 $\mu$, 분산 $\sigma^2$ 계산 → $\hat z_k = (z_k - \mu)/\sigma$. 이렇게 하면 통계적으로 모든 값이 비슷한 범위를 갖게 된다.
+- **여기서 끝나지 않는다 — $\gamma, \beta$ 도입**: 정규화된 $\hat z_k$를 그대로 activation에 넣는 대신, **scale($\gamma$)·shift($\beta$)한 값** $\gamma \hat z_k + \beta$를 activation에 넣는다. $\gamma, \beta$는 뉴런마다 존재하는 **학습 가능한(trainable) 파라미터**로, 기존 모델 파라미터 $W$에 더해 batch norm을 쓰면 추가로 학습해야 할 파라미터가 생기는 것.
+- **왜 굳이 scale/shift를 하는가**: 정규화 범위를 고정값(평균 0, 분산 1)으로 강제하는 게 항상 최적이라는 보장이 없다는 직관. $\gamma, \beta$를 학습 가능하게 열어두면 뉴런별로 최적의 정규화 범위를 훈련을 통해 자동으로 찾을 여지가 생긴다 — 더 많은 유연성·개선 여지.
+- $\gamma, \beta$도 **backpropagation으로 업데이트**된다(단, $W$에 대한 backprop 식과는 형태가 다르며 이번 수업에서 유도까지는 다루지 않음). 핵심은 구현이 쉽다는 것 — 원리를 완전히 이해하지 못해도 이 층을 추가하고 그대로 backprop을 돌리면 $\gamma, \beta$가 알아서 학습된다.
+
+### 20. Batch Normalization — Training vs. Inference
+
+- **문제**: 학습이 끝나면 $\gamma, \beta$는 확정되지만, inference 시점의 $\mu, \sigma$는 어떻게 정하는가? Test 샘플은 보통 1개씩 들어오므로 "mini-batch 통계"를 그 자리에서 계산할 방법이 없다(여러 test 샘플을 동시에 넣지 않는 한).
+- **해법**: 학습 중에 각 mini-batch마다 계산됐던 $\mu, \sigma$ 값들의 **이동평균(moving average)** 을 구해서 고정시켜두고, inference 때는 이 고정된 $\mu, \sigma$와 학습된 $\gamma, \beta$를 그대로 사용한다.
+- **효과**: batch normalization을 적용하면 훈련이 훨씬 안정적이고 빨라진다(강의 그래프에서 파란 곡선=batch norm 적용, 주황 곡선=미적용 — 파란 쪽이 확연히 안정적). 단점·한계도 존재하며, 이를 mini-batch에 의존하지 않는 방식으로 개선한 **group normalization, layer normalization**도 언급(세부 내용은 다루지 않음 — batch norm 원리를 이해하면 유추 가능하다고만 언급).
+
+### 21. CNN — Convolution 연산
+
+- 배경: 지금까지는 fully-connected layer 기준으로 backprop을 다뤘지만, CNN·attention/transformer 같은 잘 알려진 다른 아키텍처도 존재한다. 이번 강의에서는 CNN만 개략적으로 다루고 넘어감(CNN 자체의 이해가 이 과목의 핵심은 아니지만, 이후 예시에 등장할 수 있어 배경으로 소개).
+- **기본 아이디어**: 이미지에 필터(filter/kernel)를 대고, 필터가 이미지 전체를 스캔하며 어떤 정보가 담겨 있는지 뽑아낸다. 필터(커널)가 CNN의 **모델 파라미터**.
+- **2D convolution 연산**: 필터를 이미지의 한 위치에 대고 element-wise 곱 후 합산(weighted sum)해서 출력값 하나를 얻는다 → 필터를 옆으로 이동시키며 같은 연산을 반복 → 출력 feature map 전체를 채운다.
+- **필터 여러 개 사용**: fully-connected layer에서 뉴런을 여러 개 두는 것과 같은 논리로, 필터를 여러 개(예: blue filter + red filter) 두면 각 필터가 독립적으로 이미지를 스캔해 각각의 출력을 만들고, 이를 쌓아 depth가 있는 출력을 만든다. **출력 depth = 필터 개수**(fully-connected에서 뉴런 수가 늘면 출력 차원이 느는 것과 동일한 논리). 이후 fully-connected와 마찬가지로 비선형 activation을 거친다.
+- **입력이 다채널(RGB 등)일 때**: 실제 이미지는 보통 RGB 3채널 → 입력 depth = 3. 이 경우 **필터의 depth도 반드시 입력 depth와 일치**해야 한다(예: depth 3). 필터 depth가 3이어도 필터는 "1개"로 취급되며(R·G·B 각 채널에 대해 conv 연산을 한 뒤 셋을 합산해서 값 하나를 얻음), **출력 depth는 필터의 depth가 아니라 필터의 개수로 결정**된다.
+- **일반적인 경우(다채널 입력 + 다중 필터)**: 입력 depth가 3이면 각 필터의 depth도 3이어야 하지만, 필터를 2개 쓰면 각 필터가 만드는 결과가 하나씩(filter 1 결과, filter 2 결과) 쌓여 최종 출력 depth = 2가 된다. 즉 **필터 depth는 입력 depth와 맞추고, 출력 depth는 필터 개수가 결정**한다는 원칙이 핵심.
+
+### 22. CNN — 전체 아키텍처, Pooling, 학습
+
+- 전체 그림: (convolution + 비선형 activation) 블록을 여러 층 쌓고(fully-connected에서 layer를 쌓는 것과 동일한 논리), 마지막에 fully-connected layer를 붙여 classification 등 최종 예측을 수행한다.
+- **Max pooling**: CNN에만 있는 별도 연산으로, 정보를 압축(compression)하는 과정 — 특정 영역에서 값을 고르거나(max) 평균을 취하는 식의 마스크(mask) 연산. 목적: (a) 연산 부담을 줄이고, (b) 작은 회전·국소적 왜곡(local distortion)에 모델을 어느 정도 불변(invariant)하게 만든다 — 경험적으로 자리 잡은 휴리스틱. Convolution+비선형+pooling 블록이 여러 번 반복되는 구조.
+- **왜 "국소적(local)"으로 보는 게 말이 되는가**: 이미지 속 각 물체는 특정 영역에 국한(localized)돼 있어서, 서로 멀리 떨어진 픽셀끼리보다 가까운 픽셀끼리 상관관계가 높다 — 그래서 필터가 인접 픽셀만 묶어서 처리하는 게 합리적이라는 설명.
+- **학습 방식은 fully-connected와 완전히 동일**: forward propagation → loss 계산 → backpropagation으로 gradient 계산 → mini-batch SGD/momentum/RMSProp/Adam 등으로 업데이트. Backprop의 구체적 수식은 아키텍처(conv 연산)에 맞게 달라지지만 절차 자체는 바뀌지 않는다 — **바뀌는 건 아키텍처뿐**. Overfitting 대응(dropout, weight decay)이나 batch normalization도 CNN에 동일하게 적용 가능.
+- 이것으로 "딥러닝 기초" 파트(DNN 구조, loss function, optimizer, backpropagation, overfitting 대응, batch normalization, 대표 아키텍처 CNN)를 마무리. Transformer는 필요할 때마다 배경 설명을 추가하는 방식으로 다룰 예정이라고 언급.
+
+---
+
+**(여기서부터 새 덱: "Issues in Centralized Training" — t=2163)**
+
+### 23. Issues in Centralized Training — 정의와 문제의 동기
+
+- 지금까지 쌓은 딥러닝 배경지식은 바로 이 문제(그리고 다음 주부터 다룰 분산 학습)를 기술적으로 이해하기 위한 준비였다는 점을 강조하며 새 강의노트를 시작.
+- **Centralized training의 정의(이 과목 기준)**: 모델과 데이터셋이 **하나의 GPU·하나의 머신**에 모두 있는 상태로 학습하는 것.
+- **문제의 동기**: 모델 크기가 GPU 메모리보다 빠르게 커지고 있어 단일 머신에서 매우 큰 모델을 학습하는 게 어렵거나 아예 불가능해진다(out-of-memory). 데이터셋 크기가 클 경우에도 메모리뿐 아니라 연산량·지연(delay) 부담이 커진다.
+- **On-device 학습 예시**: Qualcomm·Apple 같은 모바일 AI 하드웨어는 서버용 고가 GPU보다 메모리가 훨씬 작아, 모델 크기와 메모리 간 격차가 더 크다 → on-device 학습은 특히 더 어려운 문제.
+- 결론: 큰 모델 + 큰 데이터셋이 centralized training의 근본 이슈이고, **분산 학습(distributed training)은 이 격차를 메우기 위한 한 방향**(여러 머신을 도입해 협력적으로 학습).
+
+### 24. 핵심 지표 세 가지: Memory, Computation, Delay
+
+- 학생 질문에 대한 답으로 명시: centralized training의 이슈를 볼 때 봐야 할 핵심 지표는 **memory, computation(연산량), delay(지연)** 세 가지.
+- Memory는 다시 두 가지로 나뉜다: **parameter memory**와 **activation memory** — 이후 순서대로 설명.
+
+### 25. Parameter Memory
+
+- 문제 제기: GPU가 96GB인데 모델이 120GB면 당연히 OOM. 그런데 **모델이 80GB로 GPU(96GB)보다 작아도 학습이 안 되는 경우**가 많다 — 그 이유 중 하나가 parameter memory.
+- **SGD**: 모델 파라미터 수를 $m$이라 하면, gradient도 원소 수가 $m$개(전체 파라미터를 업데이트한다고 가정) → 모델 + gradient = 약 $2m$ 필요.
+- **SGD with Momentum**: 모델 + gradient + momentum buffer(동일 차원) → 약 $3m$.
+- **Adam**: momentum류 항 + RMSProp의 $v_t$ 항 + 모델 + gradient를 전부 동시에 유지 → 약 $4m$(momentum, $v_t$, weights, gradient가 모두 같은 차원이라고 가정).
+- **파라미터 수 세는 법**: linear layer는 (입력 차원 $c_i$) × (출력 차원 $c_o$); conv layer는 (필터 개수 $c_o$) × $c_i \times k_h \times k_w$($c_i$=입력 채널, $k_h, k_w$=필터 높이·너비).
+- **모델 크기 = 파라미터 개수 × bit width**. 워크드 예시(Q&A 포함): 파라미터 6,100만 개(61M)를 32-bit float로 저장하면 모델 크기 ≈ 244MB(61M × 4byte). 이 경우 optimizer별 필요 메모리는 **SGD 244×2, SGD+Momentum 244×3, Adam 244×4 (MB)** 로 커진다. 8-bit 등으로 quantize하면 저장량은 줄어들지만 여전히 파라미터 개수에 비례한다.
+- **핵심 메시지 두 가지**: (1) GPU 메모리가 모델 크기보다 크다고 해서 학습이 보장되지 않는다 — gradient·optimizer state 때문. (2) optimizer가 복잡할수록(SGD < Momentum < Adam) 필요 메모리가 커진다 — 그래서 Adam으로는 OOM이 나던 모델이 SGD로 바꾸면 돌아가는 경우가 실제로 있다.
+- Parameter memory는 **모델 크기에 비례**하고, **mini-batch 크기·데이터셋 크기와는 무관**하다는 점이 다음 섹션(activation memory)과의 핵심 차이.
+
+### 26. Activation Memory
+
+- Parameter memory보다 **직관적이지 않은** 개념이며, 이를 이해하려면 backpropagation의 구조를 다시 봐야 한다.
+- **activation 개수 정의**: 샘플 1개를 입력하면 각 layer의 activation 개수 = 그 layer의 출력 뉴런 수(예: 입력 5 → layer1 출력 4개 → layer2 출력 3개 → layer3 출력 2개). **Mini-batch SGD처럼 $n$개 샘플을 텐서로 묶어 동시에 처리**하면, 각 layer의 activation 개수가 뉴런 수 × $n$으로 늘어난다(예: 4n, 3n, 2n). Conv layer도 동일 논리: 샘플 1개당 activation 개수는 $c_o \times h_o \times w_o$이고, 배치가 $n$이면 여기에 $n$이 곱해진다.
+- **왜 activation을 저장해야 하는가 (backprop과의 관계)**: forward propagation에서 layer $L$의 계산은 $a^{(L-1)}$(이전 layer의 activation, "입력 차원 × 배치 크기"의 행렬)이 가중치 $W$를 거쳐 $z$ → 비선형 activation → $a^{(L)}$이 되는 과정이다. **Backpropagation으로 그 layer의 가중치에 대한 gradient를 계산하려면 chain rule 상 $a^{(L-1)}$(그 layer의 입력 activation)이 반드시 필요**하다.
+- **Inference만 할 때는 문제없음**: 추론(forward propagation만 수행)에서는 $a^{(L-1)}$을 이용해 $a^{(L)}$을 구하고 나면 $a^{(L-1)}$은 즉시 버려도 된다(다음 계산에 필요 없음) — 최종 출력까지 이 과정을 반복하며 이전 activation들을 순차적으로 폐기할 수 있다.
+- **Training 시에는 즉시 버릴 수 없음**: backpropagation 때 각 layer의 gradient를 계산하려면 forward pass 때 만들어진 그 layer의 입력 activation이 필요하므로, **forward propagation이 끝날 때까지(정확히는 해당 layer의 backward가 끝날 때까지) 모든 중간 activation $a^{(L-2)}, a^{(L-1)}, a^{(L)}, \dots$을 계속 들고 있어야** 한다. Backward pass는 뒤(출력쪽)에서 앞쪽으로 진행되며, 각 layer의 gradient 계산이 끝날 때마다 그 layer가 썼던 activation을 순서대로(출력에 가까운 것부터) 버릴 수 있다.
+- **왜 병목(bottleneck)인가**: 모델의 layer 수가 많거나 layer당 뉴런 수가 많을수록 저장해야 할 activation 총량이 커진다(→ **모델 크기에 비례하는 성분**). 동시에 각 layer의 activation 차원은 **mini-batch 크기에 비례**해서 커진다 — 예: mini-batch 1,000이면 샘플 1개일 때보다 activation 차원이 1,000배.
+- **결론**: activation memory는 모델 크기와 mini-batch 크기 양쪽에 동시에 비례한다(전체 layer에 대해 합산). 이 때문에 **training 메모리가 inference 메모리보다 훨씬 크다** — parameter memory뿐 아니라 activation memory까지 추가로 필요하기 때문. 실전 경험과 연결: 같은 모델이 mini-batch 크기 112 등에서는 OOM이 나다가 8이나 16처럼 작은 배치로 줄이면 학습이 되는 경우가 흔한 이유가 바로 이것.
+- **완화 전략(언급만, 세부는 다루지 않음)**: 모든 activation을 들고 있는 대신 일부만 저장하고 필요할 때 다시 계산하는 **recomputation(activation checkpointing)** — 메모리와 연산량을 맞바꾸는 트레이드오프.
+- Parameter memory와 activation memory가 정확히 산술적으로 더해지는 관계는 아니고(다른 메모리 요소들도 존재), 이 두 가지가 가장 핵심적으로 줄이려고 시도하는 병목. 이후 분산 학습 기법들을 배울 때, 각 기법이 parameter memory를 줄이는지 activation memory를 줄이는지로 구분해서 설명할 예정이라고 예고(예: 모델을 여러 조각으로 나눠 여러 머신에 분산하면 머신당 parameter memory도 activation memory도 줄어든다; 데이터셋만 여러 GPU에 나누면 parameter memory는 그대로지만 activation memory는 줄어든다).
+
+### 27. Computation 지표 — MAC, FLOPs
+
+- **MAC(Multiply-Accumulate) 연산**: 신경망 forward propagation에서 흔히 일어나는 연산 — 곱셈(multiply) 하나 + 누적합(accumulate) 하나가 한 세트. Fully-connected layer의 forward propagation에서 입력 차원 $c_i$, 출력 차원 $c_o$, mini-batch 크기 $N$이면 필요한 MAC 연산 수는 $N \times c_i \times c_o$ 형태로 표현된다. CNN처럼 더 복잡한 구조는 MAC 수가 더 늘어나지만 세부 유도는 다루지 않는다.
+- **FLOPs(Floating Point Operations)**: 더 일반적이고 직관적인 지표 — 덧셈·뺄셈·곱셈·나눗셈 등 모든 산술 연산을 동일하게(1회 연산 = 1 FLOP) 취급한다. 곱셈 1회 = 1 FLOP, 덧셈 1회 = 1 FLOP이므로, MAC 하나(곱셈+누적합) = 2 FLOPs.
+- Backpropagation의 연산량(FLOPs)은 forward propagation의 대략 2배 정도로 알려져 있다(강의에서 참고 링크로 소개, 세부 유도는 다루지 않음).
+- **FLOPs가 논문에서 표준적으로 쓰이는 이유**: 특정 하드웨어에 의존하지 않고 알고리즘·모델 자체의 연산 부담을 나타내는 **형식적(formal)** 지표이기 때문 — 그래서 연구 논문들이 연산 효율을 주장할 때 대개 FLOPs 기준으로 설명한다(다만 학습 중 FLOPs를 정확히 세는 건 추론보다 더 어렵다는 언급도 있었다).
+
+### 28. Delay(Latency) 지표
+
+- 연산 부담을 측정하는 또 다른 방법은 **특정 하드웨어에서 실제 지연(delay)을 측정**하는 것 — 같은 GPU에서 알고리즘 A와 B의 지연을 각각 재서, 더 적게 걸리는 쪽을 "더 계산 효율적"이라고 주장하는 방식. FLOPs보다 측정은 쉽지만, **하드웨어에 의존적**이라는 한계가 있다 — 느린 머신에서는 두 알고리즘의 격차가 커 보이고, 빠른 머신에서는 격차가 거의 안 보일 수도 있다. 그래서 FLOPs 쪽이 더 형식적인(formal) 지표로 취급된다.
+- Latency는 (a) **알고리즘/모델 쪽 요인** — 모델 크기, 출력 activation 크기, 어떤 optimizer를 쓰는지 — 과 (b) **하드웨어 쪽 요인** — 프로세서가 초당 처리 가능한 연산 수, 메모리 대역폭(memory bandwidth) — 양쪽에 의해 결정된다. 이 지연을 정확히 수식으로 모델링하는 건 늘 어렵고, 이 수업에서 굳이 formal하게 모델링할 필요는 없다고 언급 — 목표는 (단일·복수 머신으로) 학습을 실제로 빠르게 만드는 것. 하드웨어와 알고리즘을 함께 최적화(co-optimization)하려는 하드웨어 연구자들도 있다고 언급.
+- Memory 이슈와 마찬가지로, **모델이 크거나 데이터셋·mini-batch 크기가 클수록 computation(FLOPs/MAC)과 latency 모두 증가**한다.
+
+### 29. Q&A — 모델 크기, 트레이드오프, "정답 없음"
+
+- **Q: 모델 크기는 얼마나 커야 이상적인가?** A: 타겟 애플리케이션에 따라 다르다. OpenAI 같은 강력한 범용 foundation model을 지향하면 모델을 가능한 한 계속 키우려 하지만, 어느 순간부터 성능이 더 이상 오르지 않는 구간에 도달할 수 있다 — 데이터가 계속 생성되고 있어도 모델 크기를 무한정 키우면 overfitting 등으로 오히려 성능이 나빠질 위험이 있기 때문에 데이터 양과 모델 크기를 맞춰가야 한다(OpenAI가 사용자로부터 데이터를 계속 수집해 모델을 더 키워나가는 이유로 언급됨 — 정확히 어떻게 쓰이는지는 알 수 없지만 모델 개선에 활용될 것이라는 추정). 반대로 OpenAI 수준만큼 복잡하지 않은 특정 target task라면 무한히 큰 모델이 필요하지 않고, 경험적으로 적정 크기를 찾아야 한다. 또한 **모델 크기보다 아키텍처 선택이 더 중요할 때도 있다** — 예: Transformer 기반 아키텍처가 성능 향상에 크게 기여.
+- **Q: 학습이 되려면 모델 크기 대비 메모리가 얼마나 더 필요한가?** A: 보편적인 정답은 없다 — mini-batch 크기와 optimizer 선택에 따라 달라진다(강의 사례: 랩에서 20GB나 10GB급 모델로도 OOM을 겪는 경우가 있었다고 언급). 실무적으로는 시행착오(try-and-see)로 접근하되, 배운 원리에 기반해 **선택지를 좁힐 수 있다**: mini-batch 크기를 줄이거나, 모델 크기를 줄이거나, 더 단순한 optimizer(예: Adam 대신 SGD)를 쓰는 식. **모델 크기 유지가 중요한 태스크라면** optimizer를 단순화하고 mini-batch를 줄이는 쪽으로, **mini-batch 크기 유지가 중요하다면** optimizer를 단순화하고 모델 크기를 줄이는 쪽으로 트레이드오프한다.
+- **일반화된 코멘트**: 머신러닝의 많은 부분(왜 batch normalization이 되는지, 왜 Adam이 잘 되는지 등)은 여전히 **정답이 없고 경험·휴리스틱에 의존**하며 활발한 이론 연구 대상이라는 점을 재차 강조(수학+ML 관련 과목을 들으면 이런 이론적 배경을 더 깊이 이해할 수 있다고 언급).
+
+### 30. 결론 및 다음 주 예고
+
+- 오늘 다룬 centralized training의 이슈 정리: **memory 이슈**(parameter memory + activation memory), **computation 이슈**(MAC/FLOPs), **delay 이슈** — 모두 "모델이 크고 데이터셋이 크지만 단일 머신의 메모리·연산·시간은 제한적"이라는 근본 문제에서 비롯된다.
+- **다음 주 예고**: 이 문제들을 완화하기 위한 분산 학습(distributed training) 기법으로 바로 진입. 다음 주에는 **data parallelism**(모델은 나누지 않고 데이터에 대해서만 병렬 연산)을, **4주차에는 모델을 여러 머신에 나누는 전략(model parallelism 계열)**을 다룰 예정. 구체적 사례로 **DeepSeek** 모델이 언급됨 — DeepSeek 학습 시 data parallelism과 여러 model parallelism 전략을 함께 활용해 메모리 이슈를 줄이고 학습 속도를 높였다고 예고.
+- 쉬는 시간 없이 진행된 강의를 여기서 마무리.
