@@ -304,3 +304,97 @@
 - 오늘 다룬 centralized training의 이슈 정리: **memory 이슈**(parameter memory + activation memory), **computation 이슈**(MAC/FLOPs), **delay 이슈** — 모두 "모델이 크고 데이터셋이 크지만 단일 머신의 메모리·연산·시간은 제한적"이라는 근본 문제에서 비롯된다.
 - **다음 주 예고**: 이 문제들을 완화하기 위한 분산 학습(distributed training) 기법으로 바로 진입. 다음 주에는 **data parallelism**(모델은 나누지 않고 데이터에 대해서만 병렬 연산)을, **4주차에는 모델을 여러 머신에 나누는 전략(model parallelism 계열)**을 다룰 예정. 구체적 사례로 **DeepSeek** 모델이 언급됨 — DeepSeek 학습 시 data parallelism과 여러 model parallelism 전략을 함께 활용해 메모리 이슈를 줄이고 학습 속도를 높였다고 예고.
 - 쉬는 시간 없이 진행된 강의를 여기서 마무리.
+
+---
+
+## Day 5 (2026-09-16) — Data Parallelism: Parameter Server와 Gradient Synchronization
+
+> 소스: 2026-09-16(수) 강의 녹음 STT + 슬라이드(신규 덱 "Week 3 — Data Parallelism", 49 slides). t=0~419는 지난 금요일(Day 4) 강의 내용에 대한 Q&A 후속 복습이고, t=419부터 교수가 "오늘 강의 제목은 Data Parallelism"이라 선언하며 새 덱으로 전환한다. **이 새 덱은 이번 시간에 도입부부터 시작했지만 "Comparison with Centralized Training" 절 초반, t=2772(11시)에 시간이 다 되어 끝나지 못했다 — 그 절의 결론, 그리고 outline상 남은 항목(memory·delay 분석, 다른 optimizer로의 확장, fully decentralized 설정)은 전부 금요일로 명시적으로 이월되었다.**
+
+### 31. 복습: 지난주 Q&A 후속 (Activation Memory, Computation/Delay, GPU OOM)
+
+- **Activation memory가 언제 최대가 되는가**: forward propagation이 끝난 시점에 activation memory가 **최댓값**을 찍고, 이후 backpropagation이 진행되면서 점점 줄어든다. 구체적으로, $W_{L+1}$에 대한 gradient 계산이 끝나야 그때 쓰인 $A_L$을 버릴 수 있고, $W_L$에 대한 gradient 계산이 끝나야 $A_{L-1}$을 버릴 수 있다 — 즉 **출력에 가까운 activation부터 순서대로 해제**된다(Day 4의 "역순으로 버려진다"는 설명을 한 단계 더 구체화한 것).
+- Activation memory 차원은 (재확인) **모델 크기(레이어 수·레이어당 뉴런 수)와 mini-batch 크기 둘 다에 비례**한다. 예: 레이어의 뉴런 수를 늘리면 $D_{in}$이 커져 activation memory 증가; 레이어 수를 늘리면 저장해야 할 activation들이 그만큼 늘어나 총합(=전체 레이어 activation의 합)이 커진다.
+- **Q: delay가 왜 $T_{computation} + T_{memory}$로 근사되는가?** A: 메모리 접근(읽기)과 연산이 병렬로 진행될 수 있다는 가정 때문 — 정확히는 최대 지연이 두 값의 합이지만, 병렬 처리가 가능하면 "이미 읽어온 데이터에 대해서는 연산을 할 수 있다"는 가정 하에서 근사적으로 성립한다. **이 과목에서 깊이 다룰 내용은 아니라고 명시적으로 언급.**
+- **Q: GPU에서 OOM이 나는 이유, CPU로 offload가 가능한가?** A: 가능하다 — 예를 들어 momentum 같은 **optimizer state를 CPU로 offload**하는 연구도 실제로 존재. 하지만 별도로 설정하지 않는 한 **기본적으로는 아무것도 offload되지 않는다**: CPU는 모델·데이터셋을 불러와 mini-batch를 구성하는 역할만 하고, gradient 계산·backpropagation·optimizer step은 전부 GPU에서 수행된다. 이것이 GPU에서 OOM을 일으키는 실질적 병목이며, offload를 하지 않는 한 **parameter memory + activation memory가 GPU VRAM을 넘으면 곧바로 OOM**으로 이어진다.
+
+### 32. Data Parallelism 도입 — 이번 주 동기와 목표
+
+- 지난주 복습을 마치며 "이제 분산 학습 전략(distributed training strategy)을 이야기할 준비가 됐다"고 선언, **오늘 강의 제목: Data Parallelism**. "Parallelism"이라는 용어가 앞으로 강의 내내 반복해서 등장할 핵심 키워드이며, 병렬화 방법에는 여러 종류가 있음을 예고.
+- **지난주 내용 재요약(이번 주 논의의 출발점)**: centralized training = 특정 데이터셋으로 **단일 머신**에서 모델을 학습시키는 것. 대규모 데이터셋·대규모 모델 때문에 memory·computation·delay 문제 발생. 그중 **대규모 모델**은 parameter memory와 activation memory 둘 다에 영향을 주고 계산 지연도 키운다. **대규모 데이터셋**은 한 epoch을 끝내는 데 걸리는 지연을 키운다. **더 큰 mini-batch 크기**를 쓰면 activation memory도 커진다.
+- **이번 주의 범위 한정**: data parallelism은 주로 **대규모 데이터셋/mini-batch 크기 문제**를 완화하기 위한 기법이며, 대규모 모델 문제를 다루는 기법이 아니다(모델 문제는 이후 model parallelism 계열에서 다룸).
+- **Full-batch gradient descent 복습(동기 부여용)**: 극단적인 경우로 전체 데이터셋을 다 써서 gradient를 계산·업데이트하는 full-batch gradient descent를 고려하면, **batch size = dataset size**가 된다. 이 경우 mini-batch 크기가 곧 dataset 크기이므로, **activation memory가 dataset 크기에도 좌우**된다(작은 값으로 고정된 mini-batch를 쓰면 activation memory가 dataset 크기와 무관할 수 있는 것과 대비).
+- **이번 주를 여는 두 가지 핵심 질문**: (1) 원하는 mini-batch/dataset 크기가 GPU의 한정된 VRAM 때문에 **메모리 문제**를 일으키면 어떻게 하는가? (2) 원하는 mini-batch/dataset 크기가 GPU의 한정된 연산 성능 때문에 **지연 문제**를 일으키면 어떻게 하는가? → **Data parallelism이 이 두 문제(메모리·지연)를 완화하는 해법**으로 제시된다.
+
+### 33. 산업 사례: DeepSeek의 병렬화 조합
+
+- DeepSeek의 기술 보고서(DeepSeek-V3, 약 1년 6개월 전 공개, 매우 많이 인용됨)를 예로 들어, 오늘 배울 data parallelism이 실제 산업에서 쓰이고 있음을 보여줌.
+- **학습(training) 프레임워크**: DeepSeek-V3는 **16-way pipeline parallelism**(다음 주 강의 주제), **64-way expert parallelism**(중간고사 전 강의 주제), 그리고 **data parallelism**(이번 주 주제)을 함께 사용.
+- **추론(inference)·배포(deployment) 전략**: **tensor parallelism**(앞으로 3주 내에 다룰 주제), data parallelism, expert parallelism을 함께 사용.
+- **핵심 메시지**: 서로 다른 병렬화 기법들은 **독립적인 대안이 아니라 함께 결합해서 쓰인다.** 연구 단계에서는 개별 기법(DP 또는 pipeline parallelism 등)만 따로 연구하는 경우가 많지만, 실제로 좋은 성능의 모델을 학습시키려면 **여러 병렬화 기법을 동시에 결합**하는 것이 일반적이다. 최근 DeepSeek 모델들도 data parallelism을 채택했는데, 이는 data parallelism이 갖는 여러 장점 때문(장점은 이번 주와 앞으로 계속 다룰 예정이라고 예고).
+
+### 34. Data Parallelism 개요(Outline)
+
+이번 주(및 금요일까지)에 다룰 순서:
+1. **작동 방식(how it works)** — 학습 과정이 어떻게 생겼는지(mini-batch/full-batch gradient descent를 알면 이해하기 쉬움).
+2. **Centralized training과의 비교** — 정말 같은 결과로 수렴하는가?
+3. **Memory와 delay** 분석.
+4. **다른 optimizer로의 확장** — 단순 SGD는 느릴 수 있으므로, SGD with Momentum이나 Adam과 data parallelism을 어떻게 통합하는지.
+5. **(금요일)** **Fully decentralized 설정** — 중앙 parameter server 없이 data parallelism을 적용하는 방식(이번 시간엔 아직 배경 개념이 없어 이름만 예고됨).
+
+이번 노트(Day 5)에서는 위 중 **1(작동 방식)** 과 **2(centralized training과의 비교, 도입부만)** 를 다룬다 — 나머지는 시간 부족으로 금요일로 이월(§40 참고).
+
+### 35. Data Parallelism 설정 — 데이터셋 분할과 모델 복제
+
+- **기본 설정은 centralized training과 동일**: 특정 모델 + 특정 목표 데이터셋. 차이는 이제 **여러 머신**을 쓸 수 있다는 것 — 단일 머신에 국한될 필요가 없음.
+- **핵심 아이디어 — 데이터셋 분할**: 데이터셋을 여러 머신에 나눠 분배한다. 예시(슬라이드): 데이터 샘플 3,000개가 있으면 처음 1,000개는 GPU 1에, 다음 1,000개는 GPU 2에, … 이런 식으로 할당 → **각 GPU는 데이터셋의 특정 부분(shard)만 담당**.
+- **할당은 학습 내내 고정**: 한 번 GPU 1에 파란색 데이터 뭉치, GPU 2에 초록색 데이터 뭉치가 할당되면, 학습이 끝날 때까지 그 배정은 바뀌지 않는다.
+- **모델은 나누지 않는다(pure data parallelism)**: 원본 모델을 **그대로 복사**해서 모든 GPU에 배치한다. 즉 데이터셋은 여러 GPU에 분산되지만, **모든 GPU가 학습 내내 동일한 모델을 공유**한다.
+- **왜 모델을 나누지 않는가**: (1) 데이터와 모델을 동시에 나누면 너무 복잡해지므로, data parallelism과 model parallelism을 **따로 연구**하는 것이 일반적. (2) (§33에서 봤듯) 실제 기업들은 data parallelism을 다른 model parallelism 전략과 **결합**해서 쓰기 때문에, "모델을 절대 안 나눈다"는 게 필수 조건은 아니다 — 단, **기본(basic) data parallelism**에서는 모델을 나누지 않는 것이 정의.
+- **미리 짚어둘 함의**: 모델을 그대로 복제하므로, data parallelism은 **parameter memory를 줄여주지 않을 수도 있다**(모델 자체 크기는 안 바뀌므로). 이 부분의 실제 내용(어떤 조건에서 줄어드는지)은 이후 다른 optimizer들을 다룰 때(금요일 이후) 자세히 설명 예정.
+- **"data" parallelism이라는 이름의 이유**: 각 GPU는 자신에게 할당된 데이터로 gradient를 계산하고, **여러 GPU가 같은 시간대(time step)에 서로 다른 데이터 샘플을 동시에 처리**한다 — 즉 데이터에 대한 연산을 여러 GPU로 병렬화하는 것.
+
+### 36. 두 핵심 구성요소: Worker Node와 Parameter Server
+
+- **Worker node**: data parallelism 과정에 존재하는 여러 노드 중 하나로, **GPU로 볼 수 있다.** 여러 GPU에 데이터 샘플을 나눠주고, 각 worker node의 역할은 **자신에게 할당된 데이터셋을 기반으로 gradient를 계산하는 것.**
+- **왜 worker node만으로는 부족한가**: 학습의 핵심은 "gradient 계산 → 모델 업데이트"인데, 여러 노드가 각각 **자신만의 gradient**를 만들어내므로, 서로 다른 GPU들이 만든 gradient들을 반영해 **하나의 모델**을 어떻게 업데이트할지가 문제가 된다.
+- **Parameter server**: 여러 노드/GPU에서 계산된 gradient들을 **취합(aggregate)**하는 중앙 구성요소. 역할: worker node들로부터 gradient를 받아서, 취합된 결과(업데이트된 모델)를 다시 돌려보낸다.
+- **Parameter server로 무엇을 쓸 수 있나**: 데이터센터 환경에서 worker node로 GPU들을 쓰고, parameter server로는 별도의 노드(CPU든 다른 GPU든) 아무거나 쓸 수 있다 — 하드웨어 종류 자체는 중요하지 않다. 다만 **parameter server가 GPU들로부터 지리적으로 너무 멀면 통신 지연(communication delay)이 발생**하므로 너무 멀리 두면 안 된다. 실무적으로는 가용한 노드들 중 하나를 parameter server로, 나머지를 worker node로 지정하는 식으로 구성한다.
+
+### 37. 동기식(synchronous) 학습 과정 — Parameter Server 기반 훈련 루프
+
+전체 데이터셋 $D$를 worker node 수만큼(예시에서는 4개 노드) 나눈 $D_1, D_2, D_3, D_4$가 각각 worker 1~4에 배정되어 있다고 하자. **$D_1 \cup D_2 \cup D_3 \cup D_4 = D$(합집합이 전체 데이터셋)이고 서로 겹치지 않는다(no overlap)**. 이 배정은 학습 내내 고정된다.
+
+1. **모델 초기화 + 다운로드**: centralized training과 마찬가지로 첫 단계는 모델을 무작위 분포에 따라 초기화($W_0$)하는 것. 여기서는 이 무작위 초기화된 모델을 **모든 worker 머신에 전송(download)**해야 한다는 추가 과정이 붙는다 — centralized training 대비 **통신(communication)**이 추가되는 첫 지점.
+2. **각 worker의 gradient 계산**: 모든 머신이 (일단은) **full-batch gradient descent**를 쓴다고 가정 — 즉 자신에게 할당된 데이터 전체를 사용해 gradient 하나를 계산한다. Worker 1은 자신의 데이터 $D_1$으로 $G_1$을, worker 2는 $D_2$로 $G_2$를 계산하는 식으로 **worker 1~4가 각각 $G_1, G_2, G_3, G_4$를 계산**(정의 자체는 일반적인 gradient 정의와 동일). **핵심**: 모든 worker가 사용하는 데이터는 서로 다르지만, **모델은 전부 동일**(parameter server로부터 똑같이 받은 모델)해야 한다 — 하나의 모델을 모든 데이터에 대해 잘 동작하도록 최적화하는 것이 목표이므로, 애초에 받은 모델이 서로 다르면 말이 안 됨.
+3. **Gradient 업로드 + 취합(aggregation)**: 각 worker가 계산한 gradient를 parameter server로 업로드하면, server가 이를 취합한다. **워크드 예시(기호 단계)**: 4개 데이터셋이 모두 **동일한 샘플 개수**를 갖는다고 가정하면, 취합된 gradient는
+   $$G = \frac{G_1+G_2+G_3+G_4}{4}$$
+   (4개 gradient의 평균)이다. 이 $G$는 4개 데이터셋 전부를 반영하는 방향, 즉 "이 4개 데이터셋 모두에서 잘 동작하도록 모델을 최적화하는 방향"으로 해석된다. *(강의에서 실제 숫자 값은 제시되지 않았고 $G_1$–$G_4$는 기호로만 다뤄졌다 — 평균을 취하는 절차 자체가 핵심.)*
+   - **통신 비용 노트**: gradient의 크기는 (전체 파라미터를 업데이트한다고 가정하면) **모델 크기와 동일**하므로 이 업로드 단계의 통신 비용이 상당히 클 수 있다. *(강의 원문은 "모델 크기가 매우 커지면 이 통신 부담이 매우 낮아진다"고 말했는데, 직전 문맥("통신 비용이 매우 크다")과 앞뒤가 맞지 않는다 — 모델이 커질수록 통신 부담이 커진다는 취지의 구두 실수(mis-speak)로 보이나, 원문 그대로 기록해둔다.)*
+4. **모델 업데이트**: parameter server가 취합된 gradient $G$로 모델을 업데이트한다. Full-batch gradient descent를 쓴다면 $W_1 = W_0 - \eta G$ 형태로 업데이트(단순 gradient descent 업데이트 식에 취합된 gradient를 대입). SGD with Momentum, Adam 등 다른 optimizer와의 통합은 **금요일에 상세히 다룰 예정** — 오늘은 단순 full-batch GD만 가정.
+5. **업데이트된 모델을 다시 broadcast**: parameter server가 $W_1$을 모든 worker node에 다시 전송한다.
+6. **반복**: 2~5단계(gradient 계산 → 업로드/취합 → 모델 업데이트 → broadcast)를 만족스러운 성능을 얻을 때까지 여러 **training round**에 걸쳐 반복 — centralized training에서 여러 epoch에 걸쳐 반복하는 것과 같은 철학. 예: 3라운드를 하기로 하면 $W_0 \to W_1 \to W_2 \to W_T$ 순으로 모델을 얻는다.
+
+**수업 중 Q&A(이 훈련 루프에 대한 질문들)**:
+- **Q: gradient를 평균 내서 업데이트하는 것만으로 모든 머신의 데이터를 "정확히" 반영하기에 충분한가?** A: **그렇다** — 단, (a) parameter server에서 모델이 업데이트되고, (b) 모든 머신이 **동일한 개수의 데이터 샘플**을 갖는다는 가정 하에서. 이것이 centralized training의 학습 과정과 정확히 같은지는 다음 절(§40)에서 다루기 시작하지만, **이번 시간에는 결론까지 가지 못했다.**
+- **Q: 모델을 여러 머신에 전송(broadcast)할 때, 머신 개수가 지연에 영향을 주는가?** A: **유선(wireline) 통신 기반 데이터센터**에서는 정확히 비례하지는 않아도 머신이 많아질수록 지연이 **늘어난다**(통신을 완전히 병렬로 할 수 없기 때문) — 머신 개수를 무시할 수 없다. 반면 **무선(wireless) 통신**(많은 실제 사례에 해당)에서는 정보를 방송(broadcast)하면 모든 머신이 동시에 수신할 수 있으므로 **머신 개수에 크게 의존하지 않는다.**
+- **Q: 모델 크기 자체가 매우 커지는 문제는 data parallelism이 해결하는가?** A: **아니다** — data parallelism은 대규모 모델 문제를 다루지 못한다. 그래서 실무에서는 data parallelism을 **pipeline parallelism이나 expert parallelism과 결합**해서 두 문제를 동시에 해결한다(data parallelism의 목표는 어디까지나 데이터셋 문제이지 모델 크기 문제가 아니라는 점의 재확인).
+- **Q: 여러 머신의 계산이 항상 동시에 끝난다고 보장할 수 있는가?** A: **아니다** — 머신마다 계산 능력이 다르거나 동시에 다른 작업을 하고 있을 수 있어 완료 시간(completion time)에 큰 차이가 날 수 있다. 이 이슈는 강의 노트의 **delay 절**에서 다룰 예정이며, **synchronous distributed learning**과 **asynchronous distributed learning**을 구분해서 고려해야 하는 이유이기도 하다 — 대략 **10주차 전후**(일정은 바뀔 수 있음)에, 첫 강의에서 이미 보여준 course overview 상의 예고된 주제로 다시 등장할 예정.
+
+### 38. "A Simpler Illustration" — 같은 과정의 재정리
+
+- 위 §37과 동일한 과정을 더 단순한 그림으로 다시 요약: 전체 학습 데이터셋을 가진 **중앙 parameter server**에서 시작 → 데이터셋을 여러 머신에 분산 → 현재 모델을 모든 노드에 전송(모델 다운로드) → 각 노드가 자신에게 할당된 데이터로 gradient 계산(서로 다른 데이터셋 → 서로 다른 gradient) → 각 gradient를 parameter server로 전송 → server가 취합해서 모델 업데이트 → 좋은 성능을 얻을 때까지 반복.
+- 이 시점(강의 진행 기준)까지 **아직 다루지 않은 것**: (1) 이 학습 과정이 centralized training과 **정확히 같은 결과**를 내는지, (2) **memory·delay** 분석, (3) 이 과정을 **다른 optimizer**로 확장하는 방법 — 모두 이후 강의(주로 금요일)로 이월.
+
+### 39. 통신 병목과 Fully Decentralized 설정 예고
+
+- 오늘 나온 질문들과 연결지어: 머신 수가 많아지면 **모델 전송(broadcast)** 부담과 **gradient 업로드** 통신 부담이 둘 다 커지고, 이는 결국 **parameter server 자체에서 심각한 병목(bottleneck)**을 일으킨다.
+- 이를 완화하기 위해 연구된 것이 **fully decentralized 설정** — 중앙 parameter server 없이 data parallelism을 적용하는 방식(모든 머신에 연결된 중앙 서버가 존재하지 않음). **금요일에 다룰 예정.**
+- 오늘 나온 질문들(머신 수·통신 지연, 완료 시간 불일치 등)은 대부분 **앞으로 이어질 강의들에서** 다뤄질 것이라고 명시적으로 언급되었다.
+
+### 40. Comparison with Centralized Training — 도입부만 진행, 다음 시간(금요일)으로 이월
+
+- 이 절이 답하려는 질문: **data parallelism의 학습 과정이 뭔가를 보장하는가?** — 임의의(arbitrary) 모델로 수렴하는 것인지, 아니면 실제로 centralized training과 **동일한 학습 과정**을 따르는 것인지.
+- 비교의 기준점으로 "Deep Learning Basics" 강의 노트 **26페이지**에 있던 centralized training의 학습 과정을 다시 가져옴: $W_0$를 무작위 초기화한 뒤, 여러 epoch/iteration에 걸쳐 학습 — **매 iteration마다 데이터셋 $D$ 전체를 사용해 gradient를 계산**하고 모델을 업데이트하는 과정을 반복($T$ = iteration index). 여기서는 **full-batch gradient descent**를 가정하므로 표기에 $N$(worker 수)이 등장하지 않는다.
+- Data parallelism 쪽에서는 이 위에 **추가적인 과정**이 붙는다고 언급하며 새 파라미터 **$N$(worker node 개수)**을 도입: 모든 worker node가 parameter server로부터 **동일한 모델**을 받았기 때문에, 이후 **모든 worker가 병렬로 gradient를 계산하는 과정**이 추가된다는 점까지만 언급되었다.
+- **여기서 시간 종료(t=2772, 11시)**: 교수가 "이 슬라이드부터는 금요일에 이야기하겠다"고 명시적으로 말하며 강의를 마쳤다. 즉 **centralized training과의 실제 비교(수렴 결과가 같은지에 대한 증명/설명)는 이번 시간에 완료되지 않았고, 다음 시간(금요일)으로 명시적으로 이월**되었다. 마찬가지로 §34 outline 중 memory/delay 분석, 다른 optimizer로의 확장, fully decentralized 설정도 전부 금요일 이후 몫으로 남았다.

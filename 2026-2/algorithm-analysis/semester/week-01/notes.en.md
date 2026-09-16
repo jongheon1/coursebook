@@ -407,3 +407,122 @@ Correctness is obvious (repeating a unit increment $p\times q$ times yields $p\c
 **The efficiency question, and an open cliffhanger.** Applying Day 2 §16's definition of "efficient algorithm" (running time bounded by a polynomial in input size) at face value, $O(p,q)$ looks polynomial in $p$ and $q$, so it seems efficient. In a class poll, a sizable number of students voted "not efficient," and the instructor explicitly confirmed: **"the answer is no, it's not efficient, even under our own definition"** — but **explicitly deferred the reason to the next lecture.** (This note does not speculate here — the standard explanation for why an apparently-polynomial bound turns out not to be efficient, e.g. measuring input size by number of digits rather than by value, is not pulled in until it's actually covered in class.)
 
 **Note (instructor's preview).** Integer Multiplication, like the examples seen so far (the $O(n\log n)$ maximum-subsequence-sum algorithm, closest pair), was explicitly previewed as another problem to be tackled via **divide-and-conquer** — the concrete divide-and-conquer algorithm itself has not been presented yet.
+
+---
+
+## Day 5 (2026-09-16) — Resolving Integer Multiplication's Efficiency, Divide-and-Conquer (4-Way → 3-Way), and a New Problem Preview
+
+> Source: recording STT transcript (`2026-09-16-algorithm-analysis-1`, EN/KO bilingual paragraphs; original kept under `_private/2026-2/algorithm-analysis/week-01/`). Picks up directly from Day 4 §E's cliffhanger (why $O(p,q)$ is not efficient, and the deferred objection to the running-time notation itself). **⚠️ No slide deck or handout exists for this topic this semester, exactly as in Day 4 §E — this entire section is recorded purely from what was actually said in the lecture audio.**
+
+### A. Resolving Day 4's Cliffhanger — Why the Naive $O(p,q)$ Algorithm Is Not Efficient
+
+**Input size must be measured in bits, not in value.** The instructor first recalled that a student had earlier answered the running time of this algorithm was $O(p^3)$, which he'd called "not quite accurate, but good enough for our purposes." He then reapplied Day 2 §16's definition of an efficient algorithm (running time bounded by a polynomial in the input size): $\Theta(p\cdot q)$ (written $O(p,q)$ for convenience) is indeed a polynomial in $p$ and $q$ themselves — but **the input size is not the value of $p$ and $q$, it's the number of bits (symbols) needed to represent them**. He stressed this isn't only because the RAM model breaks down for such large integers — even under the RAM model, the very definition of input size is simply "how many symbols are needed to represent the given input."
+
+The number of bits needed to represent $p, q$ is roughly
+$$n \approx \log_2 p + \log_2 q,$$
+so $p, q$ are themselves roughly $2^{\Theta(n)}$ in terms of the input size $n$. Hence $\Theta(p\cdot q)$ is **exponential** in the input size $n$ — this is precisely why, even under the course's own definition, the algorithm is not efficient (confirming what was stated but left unexplained at the end of Day 4). ("So now our goal is, first, to come up with an efficient algorithm, and then to further improve its running time.")
+
+**What the deferred objection to the $O(p,q)$/$O(p^3)$ notation actually was.** Day 4's other deferred point — the objection to the running-time approximation itself — was also resolved here: each `ans ← ans + 1` is not a constant-time addition, because `ans` can grow as large as $p\cdot q$, and adding 1 to a binary integer takes time proportional to its length, roughly $\log_2 p + \log_2 q$. So the more accurate running time is of the form
+$$\Theta\big(p\cdot q\cdot(\log_2 p+\log_2 q)\big).$$
+This extra factor doesn't change the conclusion that the algorithm is exponential-time, which is why the instructor said he "didn't worry too much about that extra factor."
+
+### B. Reformulating the Problem as $n$-Bit Integers, and Reviewing the Grade-School Algorithm — $\Theta(n^2)$
+
+To simplify the presentation, the instructor rewrote the problem: assume $p$ and $q$ have the same length, $n$ bits. **Given two $n$-bit integers $x,y$, compute $x\cdot y$.**
+
+The already-known efficient algorithm is the grade-school method translated into binary: for each bit of $y$, either copy $x$ (shifted into position) if the bit is 1, or skip it if it's 0, then add up all the resulting rows. Since each integer is $n$ bits, in the worst case there are $n$ rows of $n$ bits each, and adding them takes time proportional to the number of rows — so the total running time is $\Theta(n^2)$. Since $n$ is (half) the input size, this is already a **polynomial-time, efficient algorithm** — but the instructor promised an improved running time.
+
+### C. First Divide-and-Conquer Attempt — Splitting into 4 Recursive Multiplications (No Improvement, $\Theta(n^2)$)
+
+**The split.** Write $x = x_1\cdot2^{n/2}+x_0$ and $y=y_1\cdot2^{n/2}+y_0$, where $x_1,x_0$ ($y_1,y_0$) are the upper/lower $n/2$ bits of $x$ ($y$). Then
+$$xy = x_1y_1\cdot2^{2\lfloor n/2\rfloor} + (x_1y_0+x_0y_1)\cdot2^{\lfloor n/2\rfloor} + x_0y_0,$$
+and every product on the right — $x_1y_1, x_1y_0, x_0y_1, x_0y_0$ — is a multiplication of smaller integers, so each can be solved recursively.
+
+**Algorithm** (called **Algorithm 2** in this note — the instructor only ever explicitly named the next, 3-way version "Algorithm 3"; this 4-way version is unnamed in the recording, but the numbering is a natural inference from that later name):
+```
+function multiply(x, y, n):
+    if n ≤ 3:
+        return ElementaryMultiply(x, y)      # base case: use the elementary algorithm
+    split x into x1, x0 and y into y1, y0    # upper/lower n/2 bits
+    p1 ← multiply(x1, y1, ⌈n/2⌉)
+    p2 ← multiply(x1, y0, ⌈n/2⌉)
+    p3 ← multiply(x0, y1, ⌈n/2⌉)
+    p4 ← multiply(x0, y0, ⌈n/2⌉)
+    return p1·2^n + (p2+p3)·2^(n/2) + p4
+```
+(The final return line simplifies $2^{2\lfloor n/2\rfloor}$ and $2^{\lfloor n/2\rfloor}$ to $2^n$ and $2^{n/2}$, matching the instructor's own board notation.)
+
+**Correctness (induction on $n$).** Trivial for $n\le3$ (base case). For $n\ge4$, each half has strictly fewer than $n$ bits, so by the induction hypothesis all four recursive calls return correct products, and the algebraic identity above shows the combined return value equals $xy$. (The instructor sketched this but did not write out the full induction on the board.)
+
+**Running time.** Splitting (array indexing) is constant time; combining (shifting plus adding numbers of length about $2n$) is linear time, giving
+$$T(n) = 4T(n/2) + \Theta(n).$$
+Master Theorem: $a=4,b=2\Rightarrow\log_b a=\log_2 4=2$. Since $f(n)=\Theta(n)=O(n^{\log_b a - 1})$ (take $\epsilon=1$), this fits case 1, so
+$$T(n) = \Theta(n^{\log_b a}) = \Theta(n^2).$$
+So **splitting into 4 recursive multiplications gives no improvement at all** over the grade-school algorithm (§B) — the problem is that $\log_b a = 2$, i.e., there are 4 recursive calls. (At this point the instructor admitted he couldn't recall, on the spot, why he'd chosen $n\le3$ as the base-case threshold — the reason resurfaces in §D, in the correctness proof of Algorithm 3.)
+
+### D. The Improved Attempt — Reducing to 3 Recursive Multiplications (Algorithm 3)
+
+**The key observation.** In §C's expression we don't need $x_1y_0$ and $x_0y_1$ individually — only their **sum**. And
+$$x_1y_0 + x_0y_1 = (x_1+x_0)(y_1+y_0) - x_1y_1 - x_0y_0,$$
+where $x_1y_1$ and $x_0y_0$ on the right have to be computed anyway. So instead of two extra products, a single extra product $(x_1+x_0)(y_1+y_0)$ suffices to recover the middle term — cutting the recursive calls from four to three.
+
+**Algorithm 3:**
+```
+function multiply(x, y, n):
+    if n ≤ 3:
+        return ElementaryMultiply(x, y)
+    split x into x1, x0 and y into y1, y0
+    p1 ← multiply(x1+x0, y1+y0, ...)   # recursive call on (x1+x0), (y1+y0)
+    p2 ← multiply(x1, y1, ⌈n/2⌉)
+    p3 ← multiply(x0, y0, ⌈n/2⌉)
+    return p2·2^n + (p1 - p2 - p3)·2^(n/2) + p3
+```
+By construction $p_1-p_2-p_3$ equals $x_1y_0+x_0y_1$, a sum of two non-negative products, so it's **never negative** — the instructor noted this means there's no need to worry about negative intermediate values. The combine step is still linear time, the only difference from §C being one extra subtraction.
+
+**Correctness proof (induction on $n$ — carried to full completion in class).** Let $P(n)$: "for $n$-bit non-negative integers $x,y$, `multiply` returns exactly $xy$."
+
+- **Base case** ($n\le3$): trivial, since the elementary algorithm is used.
+- **Inductive step** ($n\ge4$): $x_1,x_0,y_1,y_0$ are each at most $\lceil n/2\rceil$ bits, so $x_1+x_0$ and $y_1+y_0$ are each at most $\lceil n/2\rceil+1$ bits. For $n\ge4$, $\lceil n/2\rceil+1<n$ (e.g. $n=4$: $2+1=3<4$), so the induction hypothesis applies to the call producing $p_1$, giving $p_1=(x_1+x_0)(y_1+y_0)$. Likewise $x_1,y_1$ and $x_0,y_0$ are each at most $\lceil n/2\rceil<n$ bits, so by the induction hypothesis $p_2=x_1y_1$ and $p_3=x_0y_0$. Therefore
+$$p_2\cdot2^n+(p_1-p_2-p_3)\cdot2^{n/2}+p_3 = x_1y_1\cdot2^n+(x_1y_0+x_0y_1)\cdot2^{n/2}+x_0y_0 = xy,$$
+so the return value is exactly $xy$, completing the proof. $\blacksquare$
+
+**Why the base-case threshold is $n\le3$ (the reason surfaced during this very proof).** Had the threshold been $n\le2$ instead, $n=3$ would no longer be a base case but an inductive step, and then $\lceil3/2\rceil+1=2+1=3=n$ — the **strict** inequality needed for the induction hypothesis would fail. Setting the threshold at $n\le3$ is exactly what guarantees $\lceil n/2\rceil+1<n$ for every inductive step $n\ge4$ — this is the reason the instructor couldn't immediately recall back in §C.
+
+### E. Running Time of Algorithm 3 — $O(n^{\log_2 3})$, and a Subtlety in Applying the Master Theorem
+
+**Recurrence and Master Theorem.** The combine step (splitting, final addition/subtraction, shifting) is still linear, so for some constant $c>0$,
+$$T(n) = 3T(n/2) + cn.$$
+$a=3,b=2\Rightarrow\log_b a=\log_2 3\approx1.585$. Choosing $\epsilon=0.5$, $f(n)=cn=\Theta(n)=O(n^{\log_2 3-\epsilon})$, so this fits case 1:
+$$T(n)=\Theta(n^{\log_2 3})=O(n^{1.59}).$$
+This is a genuine improvement over §C's (and the grade-school algorithm's) $\Theta(n^2)$. (Aside: the instructor noted the Master Theorem's statement itself will be given on the first page of the exam, so there's no need to memorize it verbatim.)
+
+**The subtlety.** The Master Theorem requires each recursive call's input size to be exactly the floor or ceiling of $n/2$. The calls producing $p_2,p_3$ (on $x_1,y_1$ and $x_0,y_0$) satisfy this, but the call producing $p_1$ does not: $x_1+x_0$ and $y_1+y_0$ can, in the worst case (a carry), be **one bit longer** than $\lceil n/2\rceil$. So strictly speaking, the recurrence as written isn't directly licensed by the theorem without extra justification.
+
+**The fix ("step\*").** Instead of passing the whole of $x_1+x_0$ and $y_1+y_0$ into the recursive call, split off each one's most-significant (carry) bit and pass only the remaining, exactly $\lceil n/2\rceil$-bit portions into the recursion to get their product. Then, in linear time, account for the removed top bits: if one is 1, copy the other original operand into the appropriate shifted position (and add one more bit if both top bits are 1), then add everything together to recover the true value of $(x_1+x_0)(y_1+y_0)$. This keeps every recursive call's input at exactly $\lceil n/2\rceil$ bits or fewer — satisfying the Master Theorem's requirement precisely — while the extra correction step remains linear, so the recurrence itself is unchanged. The instructor also mentioned, without proof, that even the original (unfixed) version — passing the possibly $\lceil n/2\rceil+1$-bit sums directly into the recursive call — can be shown to still run in $O(n^{\log_2 3})$, though this wasn't demonstrated in class.
+
+**Conclusion.** Algorithm 3 correctly computes integer multiplication in $O(n^{\log_2 3})\approx O(n^{1.585})$ time — asymptotically faster than both the grade-school algorithm and the 4-way divide-and-conquer attempt, both $\Theta(n^2)$.
+
+### F. Closing — Previewing a New Algorithm-Design Technique (the Seoul-to-Busan Hotel Problem, Left as a Cliffhanger)
+
+Having wrapped up divide-and-conquer, the instructor announced a move to "the next algorithm design method" (unnamed at this point — this note does not speculate) and introduced a new example problem:
+
+**Problem.** Travel from Seoul ($C_0$) to Busan ($C_n$). A list of cities $C_0,C_1,\dots,C_n$ and the distances $d_i=\mathrm{dist}(C_{i-1},C_i)$ between consecutive cities are given (as is the number of cities $N$ — or possibly $N$ minus one; the instructor left this slightly ambiguous). Traveling on foot or by bike, there's a maximum distance $D$ that can be covered in a single day, also given as input — e.g., if $d_1+d_2+d_3\le D$, one can travel from $C_0$ to $C_3$ on day one, but not if the sum exceeds $D$. Staying overnight at city $i$ costs a hotel price $p_i$. **Goal: minimize the total hotel cost while traveling from Seoul to Busan without exceeding $D$ in any single day.** (Whether or not you're charged for the final night in Busan makes no difference to the answer, so the instructor set $p_n:=0$ to simplify — either convention gives the same result.)
+
+**Algorithm 1 (a deliberately "stupid" first attempt).** A recursive function `generateSchedule(k)` generates **every possible schedule** for the first $k$ cities, regardless of whether it respects $D$ or not:
+```
+function generateSchedule(k):
+    if k == 0:
+        return { "" }                        # the singleton set containing the empty schedule
+    S ← generateSchedule(k-1)
+    S' ← ∅
+    for each schedule s in S:
+        S' ← S' ∪ { s + "skip", s + "stay" }  # branch on sleeping at city k or not
+    return S'
+
+# main: candidates ← generateSchedule(n+1)
+#       filter to schedules respecting the daily distance limit D
+#       return the one with minimum total hotel cost
+```
+**This is correct (it literally enumerates every case) but takes exponential time.** The instructor explained why in terms of *information passed between calls* rather than call count: the function itself is only called a linear number of times ($n,n-1,\dots,0$) — that part is fine. But the amount of information returned from one call to the next — the size of the set of schedules — is **exponentially large**, and that's the real reason this algorithm is inefficient.
+
+**The goal carried into the next lecture.** The instructor closed by posing the target for a better recursive algorithm: (1) the function shouldn't be called too many times, and (2) the actual size of the information passed between calls should also stay small — both are necessary before efficiency can even be hoped for. Class ran out of time here. **The solution itself is explicitly deferred to the next lecture — this note does not speculate on it.**

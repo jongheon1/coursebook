@@ -255,4 +255,163 @@ This section is the professor's brief recap of a student presentation on a paper
   - **The key argument**: from a worst-case standpoint, execution can converge on the path where the cache misses and main memory is accessed anyway — raising the provocative question: "if the worst case always looks like this, might we as well remove the cache entirely, since main memory gets accessed either way?"
   - **Caveat**: the professor is explicit that he's **not** actually arguing to remove all caches — this example is meant only to build intuition that **average-case optimization (caching) and worst-case predictability (time-predictable design) don't necessarily point the same direction**. He notes that real systems/research supporting **time-predictable caches** do exist (deferred to the next Tuesday's class for lack of time).
   - The takeaway framing for this session's research-topics introduction: not just **cache hit rate**, but other topics like **scheduling** can likewise be understood through the tension between "optimizing average performance" and "guaranteeing worst-case predictability."
+
+## 13. [Day 4] Revisiting Exercise B — utility/gain vs. time-delay curves (⚠️ no slide deck this session — recorded from the lecture audio only)
+
+> Source: 2026-09-15 lecture recording (a fourth session; recap project result document `2026-09-15-real-time-systems-1.json`, titled "Exercise B Discussion & Multi-DNN Memory Management (RT-MDM)"; original assumed archived under `_private/2026-2/real-time-systems/week-02/`). **Sections 13 (Exercise B recap), 16 (cache-interference paper discussion), and 18 (RT-MDM presentation) have no corresponding slide deck this term** — the same principle applied to the deck-less "Integer Multiplication" topic in the Algorithm Analysis course's Day 4 (recorded from lecture audio alone). The stretch around t=2776–3251 appears to be cross-talk picked up by the mic while students worked in groups (majors, interests, unrelated to the lecture) and is not reflected in this note.
+
+- This session opened with a review/discussion of Exercise B (drawing the utility/gain vs. time-delay curve for each of hard/firm/soft real-time systems).
+- **The "middle" case (corresponds to firm real-time)**: integrity/utility stays constant up to the deadline, then drops immediately to zero the instant the deadline passes — but it never goes negative.
+  - **Example — live video analytics**: in real-time object detection, if inference for one frame finishes too late, the result is simply discarded and the system moves on to the next frame. Such a delay is **not treated as a system failure** — presented as the canonical firm-deadline case.
+- **Hard real-time, revisited**: finishing within the deadline earns a corresponding utility/monetary gain, but missing the deadline drives achievable utility to **minus infinity, or at least a very large negative number** — e.g., something as bad as a person's death. Hard real-time has many variations, but this is the general case.
+- **Firm real-time, revisited**: the deadline should be met, but missing it causes little harm — no gain is achieved, but the result is zero (neither minus infinity nor a large negative number).
+- **Soft real-time, revisited**: meeting the deadline is still the ideal, as with hard/firm, but missing it still yields some value depending on how late the result is — a delay very close to the deadline is nearly as good as meeting it, while a very long delay drops to zero just like the firm case.
+- **A student question left unresolved**: "How can we actually determine this? For a hard real-time system, what exactly counts as 'good'?" — pointing out that even the hard/firm/soft explanation so far is just a conceptual framework. The professor only said "let's think about this" without giving an explicit answer, then moved on to attendance — **this question was not explicitly answered in this session.**
+
+## 14. [Day 4] Student presentation — tying together real-time systems / embedded systems / CPS / IoT (Rachel)
+
+- Context: a student presentation answering a question left open from earlier sessions — draw a **Venn diagram** of the relationship among real-time systems, embedded systems, CPS, IoT, and other system categories such as biological systems.
+- Two presenters: **Rachel (first presenter, a senior in computer science)** and **Agnes (second presenter)**. Only Rachel's content is recoverable from the STT below — **Agnes's presentation is not recoverable due to recording quality in this stretch.**
+
+### 14.1 Rachel's presentation — one diagram built around pairwise intersections
+
+- Her framing: drawing a single Venn diagram for all these systems is hard, because there's heavy overlap while the systems can also be entirely separate. So instead of comparing definitions one by one, she chose to walk through the **intersections** between system pairs.
+- Recap of the base definitions (in her own words): **embedded system** = a system built into a larger engineering device to perform a specific function. **CPS** = computing combined with the physical world — it can sense, process, and respond to the physical environment. **Real-time system** = correctness depends not just on what the system does, but on **how it's used** in the physical environment or on the internet.
+- **Five intersection examples**:
+  1. **Real-time embedded system** = an embedded system with strict timing requirements. Example: a controller embedded in a vehicle — it receives sensor information and must respond quickly; a late response can lead to system failure or serious consequences (tied back to an earlier student-presented example).
+  2. **A relatively "pure" real-time system (not clearly overlapping embedded/CPS)**: example — a networked patient monitor. This could also count as CPS since it gathers data from the physical environment. It collects vital signs and other patient data, sends it to the hospital network, and that data is used to assess patient status so the doctor can give timely care.
+  3. **Embedded CPS**: built into a larger physical device that interacts with an ecosystem. Example: a smart thermostat — she notes it can also pick up an IoT component (e.g., connected to a phone via another network). It measures temperature from the environment and automatically controls heating/cooling.
+  4. **CPS + IoT**: interacts with the physical environment while also interacting with a smart ecosystem over the internet network. Example: smart irrigation — devices store data and send it to a networked actuator; farmers check the information on their mobile devices.
+  5. **All four together (embedded + real-time + CPS + IoT)**: the system interacts with the physical world in a highly automated way. Example: **Rachel's own autonomous-car project in Washington** — sensors and cameras interact with the physical environment, and the system had to make decisions under a strict time constraint while relying on other systems over a network ("a bit frustrating, but it was possible").
+- **Takeaway**: these systems aren't fully separate. They can be separate in theory, but in real life they tend to be a mixture that overlaps — each category just describes a different aspect.
+- Rachel drew this as an **interconnected diagram** rather than plain separate circles (e.g., connected via an internet connection). She then tried to cover IoT's time-sequence model and its evaluation, but ran out of time and only covered the interrelated parts rather than a full comparison — this later stretch of her talk is less well recovered by the STT.
+
+### 14.2 The professor's follow-up discussion — not a subset, and IoT's contested position
+
+- **A claim being pushed back on (STT can't pin down whose claim "his" refers to)**: someone apparently argues that embedded systems belong to a broader category that is entirely contained within CPS (embedded ⊆ CPS). The professor explicitly calls this **the wrong view** — framing it this way, just because CPS is a very broad area, creates a misunderstanding.
+- **Counterexamples (presented as part of the same "his" argument, but which actually undercut the subset claim above)**:
+  - **A remote control**: an embedded system, but not CPS and not a real-time system.
+  - **A real-time OS**: not an embedded system, and not CPS either.
+  - **Many systems**: belong to all three of CPS, real-time, and embedded at once (e.g., Rachel's autonomous-car example qualifies).
+  - **Optimizing a car's shape**: entirely a CPS problem, but not an embedded-system problem.
+  - The professor says he agrees with this **non-subset framing**, calling it "beautiful" — with the caveat that "I'm not saying this is simply a fact, but it's elegant."
+- **IoT is the most contested spot**: **the IoT community's view** — IoT is a subset of the broader CPS domain. **The CPS community's view** — IoT is just one example of CPS. The professor says **the CPS-side view is fairer** — while closing with "there's no fixed definition, it's ultimately up to you."
+  - **Cross-check**: Day 3's section 11.5 recorded the professor's own position as "IoT isn't a strict subset of CPS, it's closer to an intersection." This session instead uses the phrasing "the CPS community's view (IoT is just one example of CPS) is fairer" — not quite the identical statement. Both agree in rejecting the IoT community's strong subset claim, but the nuance differs, so **rather than flattening them into one, both sessions' actual wording is kept as stated.**
+
+## 15. [Day 4] Course-logistics announcements
+
+- **LearnUs and the Chuseok holiday**: next week is week 4 (September 28). **September 24 (nine days from this session) has no offline class due to the Chuseok holiday and is replaced by a recorded lecture.**
+  - The recorded video is available from today until two weeks later (the Monday after next). Watching it within that window counts as attendance for that date; not watching it counts as an absence.
+- **Exercise B has been graded**: the TA has already finished grading, so scores can be checked.
+  - One student didn't use the template — **always use the designated template.**
+  - If a score looks unexpected, re-download the file to see what happened.
+  - Further questions go to **the TA by email** — not directly to the professor ("that was my mistake," implying he'd been getting direct emails before). Accept the score as given and don't push further on it.
+
+## 16. [Day 4] Student paper discussion — multi-core cache interference and cache partitioning (⚠️ no slide deck this session — recorded from the lecture audio only; the paper's citation isn't confirmable from STT)
+
+> The paper discussed here is only identified as **published in 2009** — its exact title and authors are not recoverable from the STT. The professor just said to "Google it and download it" (also noting that ACM/IEEE papers are free through the school network), and neither the paper's PDF nor any slides for it are part of this session's materials.
+
+- **Background — revisiting the Day 3 (section 12) question**: "caches are good for average performance, but since a 100% cache hit rate is impossible, are they also good for the **worst case**?" — raised again here in the concrete form of **cache interference in a multi-core setting**.
+- **Why caches make time-critical systems hard to build**:
+  1. Cache behavior is **unpredictable** from a timing standpoint — cache interference is closely tied to cache misses, and frequent misses make interference time grow unpredictably, making it hard to guarantee **worst-case execution time (WCET)**.
+  2. **Cross-core cache interference**: tasks running on different cores can interfere with each other over a (shared) cache, leading to eviction and misses — the core topic of this session.
+- **Predictability techniques researchers have proposed (overview)**: cache partitioning (reserving part of the cache for a specific task to prevent interference), worst-case analysis tools for complex architectures, and real-time cache-management techniques (e.g., cache locking).
+- **The paper's research method (presented as a general pattern)**: starts without using a real system — derives a **formula** that guarantees timing if some condition holds. A large number of random test cases are generated, and the fraction guaranteed by the formula is checked; the approach is then implemented on real systems for validation. Called "a fairly standard approach for researchers in this area."
+- **A worked example in class — why worst-case analysis is hard with multiple tasks**:
+  - With a single task, computing the worst-case execution time is no problem. With multiple tasks, the worst case **depends on which other task runs alongside it** — e.g., task A+B might have a worst case of 30ms, while task A+C might be 35ms, varying by combination and hard to compute in general.
+  - **Single-core case**: when task 1 runs, its needed data is sometimes cached (fast) and sometimes not (slow) — but this variation **doesn't affect the other task's execution**. Task 2 similarly has its own, independent range of execution times. In a single core, whether a cache access hits or misses can **always be known in advance**.
+  - **Multi-core (shared cache), running tasks 1 and 2 concurrently**: task 1 fetches data not in the cache from memory, filling the cache (that data now "belongs" to task 1). Task 2 then also needs data not present in the cache, so it copies its own data in, **evicting task 1's data**. The next time task 1 needs other data, it's no longer there → **tasks 1 and 2 interfere with each other over the cache.** This doesn't happen in a single core — there, we know in advance what will happen, but here we miss the effect of the other task executing concurrently — that's the core problem.
+- **A student volunteer's proposed solution (cache partitioning)**:
+  - In a single core, tasks write to different regions of the cache, which software can predict in advance. The paper proposes **dividing the cache into partitions and dedicating each partition to a different process**, eliminating inter-task interference — this lets us always predict cache hit/miss in advance, just as in the single-core case.
+- **Generalizing to multi-core, worked example**:
+  - Suppose there are 4 cache partitions and 4 tasks — naively matching partitions to tasks 1:1 could leave some cores idle. In practice this rarely happens (if it did, you'd just run everything on a single core instead). So we need to consider **how much cache partition each task actually needs** as a separate parameter.
+  - Example numbers: task 1 needs 1 unit of partition, task 2 needs 2 units, task 3 needs 2 units, task 4 needs 1 unit (out of 4 total partitions).
+  - This paper also determines, via **profiling**, how many partitions each task needs, and schedules based on that. Example: running task 1 (1 unit) and task 2 (2 units) together uses 3 of the 4 partitions, leaving only 1 — not enough to safely accommodate another task (e.g., one needing 2 units), so **that remaining slot is simply left blank (the core stays idle)**.
+  - **The key trade-off**: this reduces the cases where interference occurs, but it's still the ideal case — the goal is to keep concurrently running tasks from evicting each other's cached data, achieved by **allocating the right amount of partition**. When that's not possible, **the task is not given the chance to run even if a core is idle** — a design philosophy that prioritizes timing predictability over utilization.
+- **Tying back**: the professor revisits this as a concrete instance of "research topic 1 — time-predictable design" from lecture 2 (Note02, Day 3's section 12) — this time showing how to achieve time predictability at the scheduler/task-set level.
+
+## 17. [Day 4] More real-time-systems research-topic examples (networking, battery, ML) — continuing Note02 section 12
+
+> For the stretch around t≈3830–4166, it isn't clear from the STT alone whether the professor or the next presenter (Wenming Zhang) is speaking — the content is summarized below regardless, without asserting who said it.
+
+- **Course-logistics notes (materials/exercises)**: supplement files to be uploaded — lecture material through lecture 7 is already up. **Supplement 1** answers the question "where can you find the state of academic research (specifically, in real-time systems)?" After this week's lecture, supplements 0 and 1 will be covered (lecture 4 is replaced by a recorded lecture, so nothing extra is needed there). The weekly Exercise is due Monday as usual — this week's first question is a recap of this session's lecture, tied to supplement 0 but solvable independently.
+- **Framing: timeliness is orthogonal to many CS research areas**: computer science covers a wide range of research areas — operating systems, databases, programming languages, software engineering, and more — but **the real-time property shows up across all of them.** Three additional examples given:
+  1. **Networking — software-defined networks (SDN)**: if camera sensors and stream sources are all treated with equal importance and scheduled at the same priority, more important jobs can't be prioritized and deadlines get missed. Designing an SDN lets more important tasks be prioritized — an approach applicable across many applications.
+  2. **Physical systems/battery power — drone motor control**: for a physical task that must be controlled periodically (e.g., drone motor control), the amount of power needed at each moment depends on when it's executed. **The total power consumed is the same regardless of the schedule**, but how that power usage is distributed over time affects **battery aging** — "how do we distribute power usage over time to minimize battery aging" is presented as another real-time-systems research topic.
+  3. **Machine learning — running under very limited time (mentioned as an example from about eight years ago)**: this third example is the direct lead-in to the RT-MDM presentation in section 18 below.
+
+## 18. [Day 4] Student presentation — RT-MDM: Real-Time Multi-DNN Memory Management on Memory-Constrained MCUs (⚠️ no slide deck this session — recorded from the lecture audio only)
+
+> Presenter: **Wenming Zhang** (Shenzhen University). At the start, the professor told the class it wasn't necessary to fully understand the paper — just to grasp the high-level ideas. Neither a paper PDF nor slides for this presentation are part of this session's materials — the write-up below is reconstructed entirely from the spoken explanation, at the same level of detail as DNN-SAM (section 8).
+
+### 18.1 Problem setup
+
+- MCUs (microcontroller units) are increasingly used in IoT devices for their low cost and low power draw, and since they can gather data very close to the real environment, there's a growing trend toward running various DNN (deep neural network) applications directly on them.
+- **Two key challenges**:
+  1. **Extremely limited internal memory** — DNN model sizes often exceed it. Prior work has tried to shrink model memory footprint, but MCU memory is still often too small.
+  2. **The need for real-time guarantees** — essential as MCUs see more use in time-critical domains. E.g., in autonomous mini-vehicles or drones, failing to guarantee timing can cause collisions; in wearables, if periodic body-signal processing isn't timely, the data can't be trusted.
+- **Limits of prior work**: research on guaranteeing real-time DNN execution exists for hardware like GPUs and TPUs, but architectural differences mean it can't be applied directly to MCUs. Work addressing memory limitations, meanwhile, **hasn't considered real-time guarantees for multiple DNN tasks.**
+- **RT-MDM's goal**: use **external memory** on MCUs to address **both** the memory limitation and real-time guarantees for multi-DNN tasks at once. Propose a design principle covering both aspects, then build and evaluate a framework based on it.
+
+### 18.2 Background — DNN model segmentation and DMA
+
+- **A common approach to the memory limitation — model segmentation**: store the full model in external memory and split it into segments small enough to fit the internal-memory limit, loading and running them in sequence. Example: with 100KB of internal memory and a 200KB DNN model, the model can't be loaded whole, but split into segments that each fit within 100KB, it becomes runnable — **letting a larger DNN model run with less internal memory.**
+- **The catch**: reading segments from external memory adds delay.
+- **The fix — DMA (Direct Memory Access)**: a feature on most MCUs that transfers data without going through the CPU, enabling **parallel data transfer and execution**. Example: for a model split into three segments that must be read into internal memory and run in sequence, without DMA the transfer and execution happen sequentially (slow); with DMA, reading and execution overlap, cutting the overall execution time.
+
+### 18.3 The problem with inter-task parallelism
+
+- Given this background, the most intuitive scheduling approach is **segment-level scheduling**, i.e., **inter-task parallelism** — letting different tasks' segment transfers and executions be freely parallelized and preempted.
+  - Example: a low-priority task (green) released with no higher-priority task around just runs; but if a higher-priority task (yellow) is released right after, it **preempts** the lower-priority one.
+- **Two problems with this approach**:
+  1. **Overestimated response time**: response time (when a task actually finishes) is computed as **the task's own worst-case execution time (WCET) plus interference from higher-priority tasks**, and the task is guaranteed schedulable if this stays within its deadline. Allowing inter-task parallelism means multiple higher-priority tasks can keep interfering, making this calculation very complex and forcing a **very pessimistic response-time estimate** — making it very hard to guarantee completion before the deadline. **This response-time-analysis pessimism is exactly the core problem the paper sets out to solve.**
+  2. **Memory limitation**: memory stays allocated for a task's data from the moment it's read from external memory until execution finishes, so different tasks' memory-occupied windows can **overlap** — potentially causing memory shortages or forcing data to be reloaded, adding further delay. Continued interference from higher-priority tasks forces lower-priority tasks to hold their data in memory longer, **making the MCU's inherent memory limitation even worse.**
+
+### 18.4 The proposed design — task-level non-preemptive scheduling + segment-group-based memory management
+
+- **The core design — task-level non-preemptive scheduling**: at the task level, **once a task starts, it runs to completion without being preempted by another task** (parallelism is only allowed among a task's own segments). This simplifies timing analysis and improves efficiency — **eliminating the very path by which another task's segments interfere is the core mechanism that reins in the response-time pessimism described in 18.3.**
+- **A limitation**: it's ideal when a task's segments achieve maximum parallel utilization, but **memory limits mean maximum parallelism isn't always achievable.** Example: on an MCU with 100KB of internal memory, maximizing parallelism for a model split into three segments would exceed that 100KB limit — so the optimal form in that case is a more limited parallelism.
+- **The fix — segment-group-based memory management**: a policy that assigns each task's segments into **groups**. Segments mapped to the same group load and execute sequentially, but **segments mapped to different groups (even across tasks) can run in parallel**, maximizing parallelism and achieving the shortest execution time.
+- **Timing analysis**: accounting for the overhead of segmentation and segment-group mapping, response time is computed for each task — this lets the framework **guarantee timing while providing an optimized segment count and group mapping for each task.**
+- **The presenter's summary**:
+  1. Overcome the MCU's inherent memory limitation by segmenting DNN models and using external memory efficiently via DMA.
+  2. Use **task-level non-preemptive scheduling** (no preemption between tasks, parallelism only among ready tasks) to overcome the memory limitation while guaranteeing real-time execution.
+  3. Recover the inter-task parallelism lost to the non-preemptive design via the **segment-group mapping policy**.
+  4. Provide optimal segmentation and group-mapping strategies via a timing analysis that accounts for the added overhead.
+
+### 18.5 Evaluation
+
+- **Simulation**: scheduling simulations across many tasks — 1,000 random task sets generated per utilization level, for a total of **16,000 task sets** across all utilization levels.
+- **Notation**: **IP** = whether internal parallelism is enabled, the second number (N) = whether segmentation is maximized (or reduced to a single segment), and the last number = the segment-group count. **Baseline IP1-1** = the DNN model used with no segmentation at all (unschedulable if the model exceeds internal memory).
+- **Results**: the proposed approach (**IP-Optimal**) shows **the highest schedulable ratio across every scenario** — meaning it guarantees real-time execution in more cases than the baseline.
+- **Real-system implementation (case study)**: RT-MDM was implemented on an actual **Arduino Nano board**. The practical setup used two DNN tasks — **voice recognition** and **gesture recognition** — assuming 30KB of internal memory. The baseline (IP1-1) can't even run without segmentation, due to the memory limit. **IP-Optimal met both timing and memory constraints without missing a single deadline.**
+
+### 18.6 Conclusion
+
+- To run multiple DNN tasks under an MCU's inherent memory limitation, **RT-MDM** proposes: segmenting DNN models and efficiently using external memory via DMA; **task-level non-preemptive scheduling** (no parallelism between tasks, only among ready tasks, to overcome the memory limitation); recovering inter-task parallelism via **segment-group mapping**; and providing optimal segmentation and group-mapping strategies through an overhead-aware **timing analysis**.
+
+### 18.7 Q&A
+
+- **The professor's comment**: the crux of the problem is that with very low computing power (e.g., a microcontroller whose memory can be under 400KB — a fairly risky level), **even a very lightweight model can't fit entirely in internal memory.** Given a tight timing constraint, how do we handle this efficiently? He frames the essence as: **how do we split the model, and how do we overlap CPU execution with DNN execution to make the most of limited computing power** — closing out the presentation on that note.
+
+## 19. [Day 4] Preview of the next topic — introducing the periodic task model (unfinished, continues Thursday)
+
+- Right after the RT-MDM presentation, the professor opened a new topic (the periodic real-time task model) Socratically, using an **inverted pendulum** example: "how do we keep this inverted pendulum from falling down every time?"
+- **Recap of the control loop**: sense the current state via a sensor → compute → actuate the motors. This cycle has to happen "every time."
+- **A student-professor exchange narrowing down what "every time" means**:
+  - Student answer 1: "nearly the whole time, from when the experiment starts to when it ends" → accepted as correct, with the professor guessing that in this specific case the state-change interval is probably close to the order of **milliseconds** (the exact figure from the paper is unknown).
+  - The word "lifetime" also came up — the professor liked the word but said it wasn't quite the exact keyword he wanted.
+  - Student answer 2: "divide time into some duration and check at each point whether it's fallen; if those points are mostly fine, call that 'every time'" → assessed as very close.
+  - **The concept actually needed turns out to be period**: literally repeating forever is impossible, so what we really have is repeating the process at some specific time period — e.g., every 0.1 seconds.
+  - A volunteering student's addition: an analogy to a profiler's two modes, **tracing** and **sampling** — tracing continuously follows the whole process, sampling measures at intervals (a gap). Guaranteeing the pendulum's behavior "every time" would favor the tracing method, they argued, and the professor agreed. He added, though, that what we're actually going to adopt corresponds more to **periodic sampling**, while tracing (given the sense→compute→actuate cycle) is conceptually closer to a half-period.
+- **Why periodic control is realistic**: the professor stressed that this periodic modeling isn't an unrealistic theoretical assumption — it comes from **actual control systems from about 50 years ago.** Example: a thermostat (target 23°C, current 20.5°C, checking at some period whether it's over or under target and switching on/off accordingly).
+- **Formally introducing the periodic task model**:
+  - **Task**: the definition of work that's repeatedly released at some period. **Job**: the single execution instance created at each release.
+  - Example (task 1): period 5, relative deadline 4, worst-case execution time (WCET) 2. Jobs are released at times 0, 5, 10, 15, …; each must finish within 4 time units of its release, and since the WCET is 2 units, that 2-unit execution must fit somewhere inside that 4-unit window.
+  - Example (task 2): period 7, relative deadline 6 (the exact execution-time figure is unclear from the STT).
+  - **The problem setup**: with **only one processor**, control **16** inverted pendulums (= 16 tasks, each with different period/deadline/WCET, since their lengths and weights differ) so that all of them meet their timing on time — stated explicitly as **the base/target model for the entire course.**
+- **A hands-on scheduling exercise (scaled down to 4 tasks)**: 4 tasks released at times 0, 4, 8, 12, …, each job (or pair of jobs) constrained to finish within a specified window (e.g., each job of task 1 within 4 time units of its release; two other tasks' job pairs within 5- and 7-unit windows respectively) — students were given 10 minutes to construct a schedule by hand (only partly recoverable, since the exact numbers came from the slide).
+- **A priority-based preemptive scheduling example and its failure case**: the blue task gets the highest priority, green the lowest, under preemptive scheduling. At time 0, when all three tasks are ready, they run in priority order (blue → orange → green). But at time 4, the blue task is released again and **preempts** the green task — as a result, **the green task fails to meet its own requirement (2 executions within a 7-time-unit window)** — an example showing priority-based preemptive scheduling can miss a task's deadline.
+- **The same priorities applied non-preemptively**: once a task starts, it runs to completion — in this case (checked over the 0–15 window), the resulting schedule looks fine.
+- **The professor's closing, unresolved question (deferred to next time)**: "does this non-preemptive schedule stay fine forever, not just over the 0–15 window we observed?" — this question was not answered in this session. **He noted there were many follow-up questions but no time left, and said the remaining slides would continue after Thursday, then ended class.**
 - (The session closes noting this topic will be covered in more depth the following Tuesday.)

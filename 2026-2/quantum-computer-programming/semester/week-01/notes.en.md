@@ -213,3 +213,100 @@ $$
 - The instructor gave **no formal answer this session** to either student question about probability amplitudes (whether the cross term could make $P$ negative; why $\varphi_1=\varphi_2$ would be required in the classical limit) — both remain explicitly unresolved.
 - What exactly the "additional element" is that makes $U_f$ (the AND gate converted to a unitary operator) reversible was also not explained this session.
 - The formal introduction of complex numbers, conjugates, and polar form, as well as how the entries of $H\otimes H$ are actually derived, were all previewed as "next week" material — not yet covered.
+
+## Day 5 (2026-09-16) — Finishing the Double Slit (Amplitudes, Phasors, Path Difference), Wave-Particle Duality, Decoherence, Previewing Photon Polarization
+
+> Source: as of this session, the deck was revised again to `ch01_qcp_v2d.pdf` (86 slides) — pages 1–53 are identical to last session's `ch01_qcp_v2c.pdf` (81 slides), but **from page 54 onward the deck was restructured and expanded**: "Modified Probability Theory (3)-(4)" was split up and renumbered, and new pages were inserted — "Why Probabilities Stay in the Interval [0,1]," "Complex Phasors," and "View of a Single Point on the Screen (1)-(2)." All page numbers below use the new v2d numbering — Day 4's page citations from page 54 onward (which used the old v2c numbering) no longer line up with these, so they are not reconciled here; this session's page numbers simply start fresh under v2d. The session picked up around slide 54 (continuing last session's double-slit probability-amplitude discussion) and ran through roughly slide 74 (the start of photon polarization).
+
+### Modified Probability Theory (3) — A Complex-Amplitude Example of "Decreasing Probability" (p.54)
+
+- **Recap**: revisiting the interference pattern where a region that received many hits with only one slit open receives none once the second slit opens — and the classical argument that opening a second slit should only add another path to that point, so the probability there should never decrease (a callback to slide 48's three rules of classical probability theory).
+- **Classical case (real numbers)**: for $p_1, p_2 \in [0,1]$, the sum $p_1+p_2$ is always greater than or equal to both $p_1$ and $p_2$ — adding real probabilities can only increase the result.
+- **Complex-amplitude case — the professor's new worked numbers**: $\alpha_1 = 5+3i$, $\alpha_2 = -3-2i$.
+  - $|\alpha_1|^2 = 5^2+3^2 = 25+9 = 34$ (the probability corresponding to $\alpha_1$ alone).
+  - $|\alpha_2|^2 = (-3)^2+(-2)^2 = 9+4 = 13$ (the probability corresponding to $\alpha_2$ alone).
+  - Combined amplitude: $\alpha_1+\alpha_2 = (5-3)+(3-2)i = 2+i$.
+  - $|\alpha_1+\alpha_2|^2 = 2^2+1^2 = 4+1 = 5$.
+  - **Key observation**: the combined probability $5$ is **smaller than either** individual probability, $34$ and $13$ — a general demonstration (not a special cancellation case) that combining complex amplitudes and then taking the norm squared can produce a result smaller than either constituent. (The professor explicitly noted these numbers are not yet true probabilities in $[0,1]$ — a normalization step is needed, which was not covered here.)
+  - Day 4's example, $\alpha_1=\tfrac12, \alpha_2=-\tfrac12$, was a special case showing **complete cancellation** (probability exactly 0); today's example shows the **general phenomenon** that the combined probability can be smaller than either individual one even without complete cancellation.
+
+### Modified Probability Theory (4) — Sign of the Interference Term, Maximal Cancellation/Reinforcement (p.55)
+
+- Recapping last session's derived formula: $P = |\alpha_1|^2+|\alpha_2|^2+\underbrace{(\alpha_1\bar\alpha_2+\alpha_2\bar\alpha_1)}_{\text{interference term}}$. Kolmogorov's additivity axiom only covers the first two terms and knew nothing of this interference term.
+- **Sign of the interference term**: depending on $\cos(\varphi_2-\varphi_1)$, the term can be positive (**constructive** interference) or negative (**destructive** interference).
+- **Maximal destructive interference**: the smallest value cosine can take on the unit circle is $-1$ (when the angle difference is $\pi$) — in that case the interference term becomes $-2|\alpha_1||\alpha_2|$, the largest possible negative value, maximally reducing the probability.
+- Conversely, an angle difference of $0$ gives $\cos=1$, so the interference term becomes $+2|\alpha_1||\alpha_2|$, maximal constructive interference.
+
+### Complex Phasors — Phase and Rotating Vectors (p.56–57)
+
+- The professor explicitly framed this as **"not a physics lecture"** — details are skipped, only the underlying principle is shown intuitively.
+- **Picture**: the unit circle on the complex plane. At angle $\theta=0$ a point starts at a given position (e.g., on the x-axis); as $\theta$ increases the point rotates around the circle (an example around 120° was marked). As the angle keeps increasing the point moves down into the negative region and eventually returns to its starting position — one full trip around the circle is one **period** of the wave.
+- **Amplitude**: taking the absolute value from that point on the unit circle back to the x-axis gives the wave's amplitude — starting at 0, rising to a maximum of 1 as the angle increases, then decreasing back through 0 into negative territory, and returning to 0 (the intuition of a sine/cosine-shaped curve).
+- **Phasor**: each such complex number (with real and imaginary parts) representing a rotating wave like this is called a phasor — so the two amplitudes $\alpha_1, \alpha_2$ used earlier are, in the end, nothing but two complex numbers describing such waves.
+- **Defining phase — the debugger analogy**: while this wave propagates it keeps rotating; if you "stop" it — like hitting the stop button on a running program in a debugger — the rotating vector freezes at some point on the circle, and that frozen position is the **phase**.
+- **Phase difference and interference**: when two waves' phases are perfectly in sync, they reinforce each other — **constructive interference**; when they point in opposite directions, they cancel — **destructive interference**. The difference between the two phases determines the degree of interference.
+
+### View of a Single Point on the Screen (1) — Why Two Amplitudes Are Needed (p.58)
+
+- Analysis narrows to focus on a single point $x$ on the screen.
+- **Analogy to qubits**: just as a system with only two possible outcomes (e.g., measuring a qubit gives 0 or 1) needs two amplitudes, a photon reaching point $x$ can conceptually be split into two cases — "went through the upper slit" or "went through the lower slit" — even though in reality the wave goes through both. Any system needing to distinguish two situations needs exactly **two amplitudes**.
+- **When the gun is perfectly centered**: if the photon gun (source) sits exactly symmetrically with respect to the two slits, then up to some point the distances traveled toward each slit are equal, so the two phasors **rotate together in sync** (since their rotation speed is always the same).
+
+### View of a Single Point on the Screen (2) — Path Difference → Phase Difference → Combined Amplitude at Point x (p.59)
+
+- **From the point where the path lengths diverge**: after passing through the slits, the remaining distance to point $x$ differs between the two paths (one slit is closer to $x$, the other farther). From this point onward the two phasors start to fall **out of sync**.
+- **Car-wheel analogy**: imagine two cars starting out with a mark on the front tire pointing straight down. While they travel the same distance, their wheels turn the same amount, so the marks always point the same direction (phase sync). But once one car must travel farther, its wheel rotates more, so by the time it arrives, the two marks point in different directions — this is exactly how a **phase difference** arises.
+- **Meaning of the interference term**: this phase difference (subtracting one phase from the other) is precisely the $\varphi_2-\varphi_1$ inside the interference term — the two phases may or may not align, and how much they do determines whether the probability is pushed up or down.
+- **Combining at point $x$**: the amplitude $\alpha_1$ from the upper slit (rotating one way) and $\alpha_2$ from the lower slit (rotating the other way) both arrive at point $x$ — since the wave went through both the upper and lower slits, the amplitude at that point is $\alpha_1+\alpha_2$. Getting the probability means taking the norm squared of that sum, which is exactly the process that combines the two angles into a new effective angle and produces interference.
+- **Generalizing to the whole screen**: this discussion focused on one point $x$, but across the entire screen, every point has its own pair of amplitudes; collecting all of them gives a **wave function** assigning a probability to every point on the screen.
+
+### Why Probabilities Stay in the Interval [0, 1] (p.60) — Resolving Day 4's Student Question 1
+
+- **Recap of the problem**: looking at the interference term alone gives no guarantee that the probability stays within $[0,1]$ (a sufficiently negative interference term could seemingly push the total negative) — this is exactly the issue behind **the first student question from Day 4, which the instructor could not answer on the spot**.
+- **The instructor's answer (given explicitly this session)**:
+  1. **Why it can never go negative**: probability is computed as the **real part squared plus the imaginary part squared** of a complex amplitude, and a square is always non-negative — so an individual probability can never be negative.
+  2. **Why it can never leave the bounds (normalization is preserved)**: the interference term alone doesn't guarantee this, but looking at the **entire wave function** — from the gun, through the slits, to the screen — resolves it. That wave function starts out **normalized** at the gun, and the propagation of the wave is itself a **unitary operator** (a concept from an earlier lecture — reversible), and another property of unitary operators is that they **preserve normalization**. So if the wave function was normalized at the start, it stays normalized at every subsequent step, meaning the total probability across the whole screen always sums to 1.
+  - The instructor explicitly noted he would not actually compute this full wave function ("we're not physicists and we don't need it for the quantum computer") — but stated as fact that, if you did compute it, it would come out normalized.
+- **Interference = redistribution**: the interference term can raise or lower probability, but it never creates or destroys probability — it only **redistributes** it. Opening the second slit brightens some regions (higher probability) while others go completely dark (probability 0), but the total is always conserved, so it never spills outside the valid range.
+- **Revisiting the earlier example**: the instructor again referenced Day 4's result that $\alpha_1=\tfrac12, \alpha_2=-\tfrac12$ combine to give exactly probability $0$, reconfirming that complete cancellation is indeed possible.
+
+### Completing Wave-Particle Duality — Wrapping Up the Double-Slit Experiment (p.61–64 or so)
+
+- **Final conclusion**: light (photons) and electrons cannot be cleanly classified as either particle or wave — they behave as a **wave** while propagating, and revert to a **particle** at the moment of measurement (hitting the screen).
+- **Einstein quote**: the professor cited something Einstein wrote about this wave-particle duality — "it seems as though we must use sometimes the one theory and sometimes the other [wave theory and particle theory for light]... we are facing a new kind of difficulty." Some physicists were reportedly uncomfortable with this "gray area."
+- **Both pictures are necessary**: wave and particle are contradictory pictures, but neither alone explains the double-slit phenomenon — **both together** are needed (wave while propagating, particle when it hits); removing either one makes the experiment inexplicable.
+- **Animation demonstration (the professor shared links)**: a large incoming wave hits the two slits — part of it reflects back (and interferes with itself), part diffracts through the slits into smaller waves that interfere with each other as they travel toward the screen, visualized as bright and dark bands. A second animation showed footage of an actual detection screen building up its interference pattern in real time as electrons hit it — a recording of the real experiment.
+
+### Measuring Which-Path Information and Decoherence (p.~65–67 or so)
+
+- **A new variant experiment — detectors at the slits**: placing a detector at each of the two slits lets you determine which slit the photon (or electron) actually went through.
+- **Result**: doing this makes the **superposition collapse already at the slit**, not at the screen — because the "tell me where you are" measurement happens right there. From that point on, the particle proceeds as a particle, not a wave.
+- **Pattern change**: once the detectors are in place, the interference pattern disappears, leaving only a purely classical probability distribution (the plain sum of the two probabilities, with no interference term) — as if tennis balls had been thrown.
+- **Defining decoherence**: this leaking of quantum-state information into the environment is what quantum mechanics calls **decoherence** — the same kind of information leak as "opening the box" in the Schrödinger's cat analogy.
+- **Connection to qubits**: a qubit in a quantum computer getting damaged is exactly the same phenomenon — a qubit is also a wave function (with two amplitudes, for 0 and 1), and when information leaks into the environment, its superposition breaks down.
+- **Everyday-life analogy (the professor walking into the lecture room)**: the probability of the professor entering through the front door or the back door is classically the **sum** of those two probabilities, but he never walks in "as a wave" — the moment the door opens, students see him (information leaks out), instantly collapsing the wave function. In everyday life, information is constantly leaking (noise, etc.), so isolation never holds and superposition-like phenomena such as the double slit are never observed.
+- **The fundamental difficulty of building a quantum computer**: subatomic particles can maintain superposition if fully isolated from the environment, but achieving that isolation is hard — and at the same time the qubit must be **controlled** (apply a Hadamard gate, apply a NOT gate, etc.), and that very act of control is itself a way of breaking the isolation. This tension — needing isolation while also needing to compute with the qubit — was presented as the fundamental reason building a working quantum computer is hard (presented as a conceptual issue, not resolved mathematically here).
+
+### Double-Slit Experiment — Overall Summary
+
+- Classical probability theory completely breaks down here — the premise that a photon goes through only the left slit or only the right slit is simply wrong.
+- The photon propagates as a wave through both slits at once, and interference in the space between the slits and the screen makes the amplitude/probability rise and fall (bright and dark patterns).
+- Reaching the screen is the measurement — at that moment the wave function collapses, and the particle lands at one point on the screen according to those probabilities (the interference pattern).
+
+### Photon Polarization — Previewing the Next Experiment (intro only, p.~69–74 or so)
+
+- With about a minute of class time left, the next experiment was only briefly previewed — **its actual mechanics were not covered this session**; only the introductory framing is recorded here.
+- **Topic**: photon polarization. It involves several filters, and — like the double slit — this experiment is explainable only through quantum mechanics (classical physics again fails).
+- **Key framing previewed**: the photons in this experiment are also in a superposition state, just like the double-slit photons, and **this will be the first time superposition is viewed as a linear combination of two basis vectors**.
+- **Filter = measurement**: passing through a polarization filter is a measurement, just like the screen in the double slit. This experiment uses **three filters**, meaning effectively **three sequential measurements** — each one changes something about the photon, and since measurement irreversibly changes the state, the plan is to trace through how this unfolds.
+- **Roadmap for what comes next (given directly by the instructor)**: after finishing the polarization experiment, the course moves straight into defining qubits — (1) more on complex numbers, how phases look, and how to compute with them; (2) setting up the vector space, understanding how a single qubit lives in this two-dimensional vector space, and immediately starting to compute with single qubits; (3) then extending the vector space to two qubits, where the entanglement phenomenon appears; (4) finally generalizing to n qubits.
+- **Closing remark**: the instructor explained that going through this level of physical detail is meant to build intuition for these quantum effects — since classical computers don't have them — so that qubits and gates don't remain an unexplained "black box." Class ended here for the day.
+
+### Carried Over to Next Session (facts only, no speculation)
+
+- **Day 4's Student Question 1 (whether a negative cosine in the interference term could make the total probability $P$ itself negative) was explicitly resolved this session, in the "Why Probabilities Stay in the Interval [0,1]" section** — the answer: an individual probability can never be negative because it's a sum of squared real and imaginary parts, and the total across the wave function always stays within $[0,1]$ because unitary propagation preserves normalization. (This corresponds to the newly inserted slide "Why Probabilities Stay in the Interval [0,1].")
+- **Day 4's Student Question 2 (what condition $\varphi_1, \varphi_2$ must satisfy for the interference term to vanish in the classical limit) was not addressed this session either — it remains explicitly unresolved**.
+- **Photon Polarization's actual experimental mechanics** (the concrete results of passing through three filters, the vector representation of polarization states) were only previewed, not covered this session — carried over to next time.
+- **Bits vs. qubits** (already flagged in the Day 4 notes as carried over from "slide 62 onward") was also not covered this session — still carried over.
+- **The formal introduction of complex numbers, conjugates, and polar form, and the derivation of the $H\otimes H$ matrix entries** were again previewed as "next week" material this session (the instructor referenced this twice — once while explaining complex-number addition, once while explaining phasors) — still not formally covered.
+- The identity of the "additional element" in $U_f$ (the classical AND gate converted into a unitary operator) was not mentioned this session, since it's unrelated to today's topic — it remains exactly as unresolved as it was after Day 4.
