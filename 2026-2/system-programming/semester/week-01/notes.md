@@ -336,3 +336,121 @@
 - 스케줄링은 항상 **active 큐에서만** 이뤄진다(expired 큐의 task들은 남은 time slice가 없으므로 애초에 고를 이유가 없음). Active 큐의 프로세스들이 하나씩 time slice를 소진하며 expired 큐로 옮겨가다가, 결국 어느 시점엔 active 큐가 완전히 비고 모든 task가 expired 큐에 있게 된다.
 - **이때 커널이 하는 일은 단지 포인터를 교환하는 것**: 실제로는 배열이 2개 있고, `active`/`expired`는 그 배열들을 가리키는 포인터일 뿐이다. 그래서 모든 task의 time slice가 소진되는 시점에 커널은 어느 배열이 active를, 어느 배열이 expired를 가리킬지 **포인터만 맞바꾸면** 모든 task에게 새 time slice가 부여된 것과 같은 효과를 낸다(개별 task를 일일이 새 큐로 옮길 필요가 없는 매우 우아한(elegant) 구현). 
 - 강의는 여기서 시간 관계상 마무리되었고, 프로세스 스케줄링(CFS 등 이후 내용)은 **다음 강의에서 이어가겠다고 예고**됨 — 이 노트는 다음 강의 내용을 추측해서 채우지 않는다.
+
+## Day 5 (2026-09-18) — CFS, ULE, EEVDF: Fairness와 EDF의 접점
+
+> 소스: 2026-09-18 강의 녹음 STT(`recap` 프로젝트 결과물, `2026-09-18-system-programming-1.json`, 총 88문단·약 75분). **강의안이 완전히 새 덱으로 교체됨에 주의**: 지난 시간(Day 4)에 쓰였던 `L02-processscheduling.pdf`는 총 54쪽 중 16쪽까지만 다뤄진 채로 이번 시간부터는 더 이어지지 않는다 — 사실상 남겨진(superseded) 덱이다. 이번 시간은 `L02`의 나머지 페이지를 이어가는 게 아니라, **`L03-processscheduling.pdf`("Lecture 03. Process Scheduling (2)")라는 별개의 새 덱**으로 스케줄러 진화 개관부터 새로 시작한다. 강의 전반부는 지난 시간 O(1) 스케줄러 관련 질의응답과 마무리(schedule() 호출 방식, 한계)이고, 중반부부터 CFS를 깊이 있게 다루며(weight/vruntime/red-black tree, worked example, FreeBSD ULE와의 비교), 후반부는 EEVDF 도입 배경 소개와 EDF worked example로 마무리된다. **EEVDF 자체의 세부 메커니즘(lag/eligibility 계산 등)은 이번 시간에 다뤄지지 않았고 다음 시간으로 명시적으로 예고됨** — 이 노트는 그 내용을 추측해서 채우지 않는다.
+
+### 43. O(1) 스케줄러 마무리 Q&A — nice vs static/dynamic priority, fork의 타임슬라이스 분할
+
+- **질문: nice값과 static priority는 어떻게 다른가?** nice값은 **사용자가 설정하는 값** — 유저 모드에서 `nice`(또는 `setpriority`) 시스템 콜로 설정·변경한다. 이 시스템 콜이 static priority를 직접 바꾸는 건 아니다 — 먼저 nice값을 바꾸고, **커널이 그 nice값을 입력으로 삼아 최종적으로 static priority를 갱신**한다. 즉 nice는 사용자가 만지는 값이고, static priority는 커널 코드(스케줄러)가 실제로 쓰는 값 — 둘은 사실상 같은 것을 가리키지만 계층이 다르다.
+- **사용자가 nice값을 설정하는 데는 상한(cap)이 있다**: 기본(default) nice값이 사용자가 설정 가능한 **최댓값**(=가장 nice한, 즉 가장 낮은 우선순위)이다. 사용자는 오직 **더 nice해지는 방향으로만** 값을 바꿀 수 있고, 그 반대(덜 nice해지는 방향)로는 못 바꾼다 — 이건 공정성을 위한 제약. ("nicer"라는 이름의 유래: 우선순위가 낮아질수록 다른 task에게 실행 기회를 더 많이 양보한다는 뜻에서.)
+- **static priority와 dynamic priority(=prio)의 역할 분리**: static priority는 **타임 슬라이스의 길이**를 결정한다. dynamic priority는 **스케줄러가 다음에 실행할 프로세스를 고를 때** 쓰인다 — 즉 서로 다른 역할. dynamic priority를 두는 설계 철학은 I/O-bound·interactive 프로세스를 CPU-bound(batch) 프로세스보다 우대하기 위함이며, 커널 내부에서는 이를 조정하는 값을 **"bonus"**라고 부른다. 이 bonus를 조절하기 위해 커널은 각 task의 interactivity(대화성)를 모니터링/추적한다 — 예: task의 평균 대기 시간(average wait time).
+- **`task_struct`의 관련 필드**: `static_prio`와 `prio` 두 필드가 있다. 사용자가 nice값을 바꾸면 `static_prio`가 바뀌고, `static_prio`가 타임 슬라이스를 결정한다. task가 CPU에서 한동안 실행되고 나면 스케줄러가 그 interactivity를 모니터링해 우선순위를 바꿀 수 있는데, 이게 바로 `prio`(dynamic priority)다. 스케줄러가 run queue에서 다음 task를 고를 때는 **`prio` 값이 가장 높은(=숫자가 가장 작은) task**를 선택한다.
+- **`fork()`에서의 타임슬라이스 분할**: 부모가 `fork()`로 자식을 만들 때마다, 커널은 부모에게 **남아 있는** 타임 슬라이스를(예: 10) **2로 나눠** 부모와 자식에게 각각 절반씩(5, 5) 준다. (슬라이드에 있던 관련 수식에는 오타가 있었다고 교수가 언급 — 정확한 수식 자체보다는 "반씩 나눈다"는 개념이 핵심.) 이렇게 설계한 이유: 프로세스가 **여러 자손을 반복적으로 fork해서 CPU 자원을 독점하는 것을 방지**하기 위함 — 이런 분할이 없다면 반복적인 fork로 CPU를 과도하게 오래 쥐고 있을 수 있다.
+
+### 44. schedule() 함수의 호출 방식 — Direct Invocation vs Lazy Invocation
+
+- `schedule()`은 스케줄러의 핵심 함수 — run queue에서 새 프로세스를 선택해 CPU를 할당한다. 최종적으로는 이전 프로세스의 가상 주소 공간을 새 프로세스 것으로 교체하고, 이전 태스크에서 다음 태스크로 **process switch**를 수행한다 (세부 동작은 Day 3에서 다룬 내용 참고).
+- 스케줄링이 필요해지는 이벤트는 4가지 케이스로 정리된다:
+  1. 실행 중이던 프로세스가 running(또는 runnable)에서 **blocked**로 전환(예: 타이머·I/O 이벤트 대기).
+  2. 실행 중인 태스크가 **타임 슬라이스를 다 소진**(timeout).
+  3. 현재 실행 중인 태스크보다 **우선순위가 높은 태스크가 ready 상태**가 됨 → 현재 태스크는 선점(preempt)돼야 함.
+  4. 실행 중이던 프로세스가 **종료(terminate)**.
+- **케이스 1과 4는 direct invocation**이 필요하다 — 태스크가 지금 당장 blocking되거나 terminate되는 것이라 커널이 달리 할 수 있는 일이 없다. **케이스 2와 3은 lazy invocation**을 쓴다 — 급하지 않으므로(태스크가 조금 더 계속 실행돼도 무방) 커널은 일단 **플래그만 세팅**해두고, 이후의 어떤 스케줄링 시점에 이 플래그를 확인해 세팅돼 있으면 그때 스케줄링을 수행한다.
+- **예제**: 프로세스 P1이 시스템 콜을 호출해 running/runnable → blocked로 전환(케이스 1, direct invocation) → P2가 선택돼 CPU에서 실행. 이 시점에 P1이 다시 ready 상태가 됨(P1이 P2보다 우선순위가 높다고 가정) → 이는 케이스 3이고, 이를 처리하려면 lazy invocation이 필요하다. 즉 direct invocation과 lazy invocation은 이런 서로 다른 상황들을 처리하기 위해 리눅스 커널에서 둘 다 쓰인다.
+
+### 45. O(1) 스케줄러의 한계 (1) — Priority 하나에 과다하게 결합된 책임, Unfair Priority Effect
+
+- **문제 1 — 하나의 값(nice/priority)이 너무 많은 것에 동시에 영향**: priority(nice)는 응답성(responsiveness)과 오버헤드(overhead)에 동시에 영향을 준다. 타임 슬라이스가 길면 응답성이 나쁘고, 응답성을 높이려고 nice값을 조정해 타임 슬라이스를 줄이면(예: nice19/priority139에서 타임 슬라이스가 약 5ms) 컨텍스트 스위치가 더 잦아져 그만큼 컨텍스트 스위치 오버헤드가 늘어난다. 즉 응답성과 오버헤드가 타임 슬라이스라는 하나의 값에 서로 커플링돼 있다 — 바람직하지 않은 설계.
+- **문제 2(더 중요) — Unfair Priority Effect**: 우선순위 1단계 차이가 **일관된 CPU 점유 비율**을 만들어내지 못한다.
+  - 예시 A: task1 priority=120, task2 priority=121(차이 1) → 타임 슬라이스는 각각 100ms, 95ms(실제 차이 5ms) → 비율로 보면 task2가 **5% 더 짧은** 타임 슬라이스를 가짐.
+  - 예시 B: task1 priority=138, task2 priority=139(차이도 동일하게 1, 실제 차이도 여전히 5ms) → 그런데 이번엔 task2가 **50% 더 짧은** 타임 슬라이스를 가짐. (이 비율이 성립하려면 대략 task1≈10ms, task2≈5ms 정도가 되어야 하며, 이는 앞서 다룬 nice19/priority139 부근의 최소 타임 슬라이스 ~5ms와 부합한다.)
+  - 결론: **같은 1단계의 priority 차이인데도 CPU 점유율 차이는 5%에서 50%까지 들쭉날쭉** — 이것이 O(1) 스케줄러의 핵심적인 불공정성이다.
+
+### 46. O(1) 스케줄러의 한계 (2) — Expired Array의 Starvation과 Perturbation
+
+- **Starvation(기아 상태)**: 스케줄러의 목표 중 하나가 바로 이를 방지하는 것 — 어떤 태스크나 프로세스가 제때 실행될 기회를 전혀 얻지 못하는 상태.
+- **O(1)에서 expired 배열의 starvation 위험**: active↔expired 배열의 포인터 스왑은 active 배열에 더 이상 active한 태스크가 하나도 남지 않았을 때만 일어난다(§42 참고). 그런데 개발자들이 **interactive 프로세스의 응답성을 높이려는 목적**으로, 타임 슬라이스를 모두 소진한 interactive task를 마치 real-time task처럼 취급해 — 원래 설계라면 expired 배열로 가야 할 것을 — **다시 active 배열에 재삽입(reinsert)할 수 있게** 만들었다. 이렇게 되면 batch·CPU-bound 프로세스는 CPU를 실행할 기회를 영영 얻지 못할 수 있다.
+- **Perturbation(교란) 문제**: 위의 재삽입 관행이 실제로 배열 스왑을 지연시키고, expired 배열에 있는 태스크들을 훨씬 더 오래 기다리게 만드는 **실질적인 문제**다. 이를 완화하려고 O(1)은 task의 **sleep-average 이력** 등을 이용해 interactivity를 추정하고 dynamic priority를 조정하는, 다수의 복잡한 휴리스틱(heuristic)을 도입했다 — 전반적으로 설계와 구현이 그리 깔끔하지 못했다.
+
+### 47. CFS(Completely Fair Scheduler)의 등장 — Weight, Vruntime, Red-Black Tree
+
+- O(1)의 불공정성을 해결하기 위해 등장한 것이 **CFS(Completely Fair Scheduler)** — 이름 그대로 "완전히 공정한" 스케줄러를 만드는 게 목표. 발명자와 영감을 준 인물이 있지만(교수: "이름은 외울 필요 없다"), 여러 연구 논문에 기반해 리눅스 개발자들이 이 알고리즘을 커널에 도입했으며, 이는 전통적인 유닉스 프로세스 스케줄러로부터의 **상당히 큰 이탈(significant departure)**이었다.
+- **CFS의 목표**: 모든 프로세스가 자신의 공정한 CPU 몫(fair share)을 보장받는 것 — fairness가 전부다. 동시에 O(1)의 interactive 성능도 개선하고자 한다.
+- **CFS의 세 가지 핵심 축**:
+  1. **Priority 대신 weight** — 더 이상 priority라는 개념 자체가 없고, 각 task는 자기만의 **weight**를 가진다.
+  2. **Virtual runtime(vruntime)** — dynamic priority를 대체하는 개념. weight를 기반으로 계산된다.
+  3. **자료구조로 red-black tree(RB tree)** — O(1)이 썼던 단순한 배열/리스트(140개 리스트) 대신, 더 복잡해 보이지만 실제로는 더 효율적인 RB tree를 사용한다(뒤에서 다룸).
+
+### 48. CFS의 Fairness 모델 — Weight 분배식과 nice→weight 매핑
+
+- **기본 아이디어**: 이상적인 멀티태스킹 시스템을 지향하며, CFS는 각 task에게 그 task의 weight에 **비례하는** CPU 시간을 준다. 예컨대 스케줄러가 100ms를 T1~Tn에 나눠준다면, 각 task는 (자기 weight ÷ 전체 weight 합) × 100ms만큼을 받는다.
+- **nice → weight 매핑**: 사용자 입력은 여전히 nice값이지만, O(1)처럼 이를 priority로 매핑하는 게 아니라 **weight로** 매핑한다. 이렇게 설계한 철학은 §45의 unfair priority effect를 피하기 위함이다.
+- **설계 목표**: nice값 1단계 차이가 항상 대략 **10퍼센트포인트(%p)**의 CPU 사용량 차이를 만들도록 한다. 기준값은 **nice=0 → weight=1024**(O(1)에서도 기본값이었던 값). 두 task가 같은 nice값이면 CPU를 50:50으로 공정하게 나눠 갖고, 한쪽이 nice값이 1단계 높으면(우선순위 1단계 낮으면) 그 차이는 정확히 10%p가 된다.
+- 이 관계는 **기준이 되는 nice값이 무엇이든 상관없이 성립**한다 — O(1)이 120이라는 특정 기준값에 의존했던 것과 달리, CFS는 그런 의존성을 없앴다. 10%p라는 CPU 사용량 차이는 실제 weight 값으로는 약 **25% 증가**에 대응한다(예: 1024 → 1277은 약 25% 증가) — 표에 있는 인접한 모든 nice값 쌍이 이 동일한 관계를 만족한다.
+
+### 49. Vruntime의 정의와 Worked Example — 시험 대비 핵심
+
+- **Vruntime의 정의와 규칙**: CFS에는 O(1)의 dynamic priority가 더 이상 없다 — vruntime이 다음에 실행할 프로세스를 고르는 핵심 값이다. Vruntime은 그 task가 지금까지 얼마나 실행됐는지, 그리고 weight를 감안했을 때 앞으로 얼마나 더 실행돼야 하는지를 나타낸다.
+  - **Vruntime이 작을수록** = 그 task가 받아야 할 몫보다 CPU를 **덜** 받았다는 뜻 → 스케줄러가 우선적으로 기회를 줘야 함.
+  - **Vruntime이 클수록** = 받아야 할 몫보다 CPU를 **더** 받았다는 뜻 → 앞으로 기회를 덜 받게 됨.
+  - **스케줄링 결정 = 가장 작은 vruntime을 가진 task를 선택하는 것.**
+- **Worked example — 1단계(baseline: weight가 같을 때)**: 두 태스크 모두 nice=0(static priority=120)이라 **weight가 동일**하다. Target latency period가 10ms라고 하면, 이 10ms가 균등히 분배돼 time slice = **5ms, 5ms**. 지금까지 관찰된 실제 실행시간(runtime)은 각각 **task1=40ms, task2=30ms**. weight가 같으므로 vruntime 환산 계수는 1 — 즉 **vruntime도 실제 실행시간 그대로 40ms, 30ms**다. (이 단계는 "weight가 같으면 vruntime = 실제 실행시간"이라는 것을 보여주는 baseline.)
+- **Worked example — 2단계(weight가 다를 때로 확장)**: 같은 예제를 확장해, 이번엔 task1은 그대로 static priority **120**(nice0, 기준 weight)이지만 task2는 static priority **125**(nice5, 기준보다 가벼운 weight)로 둔다 — 우선순위 차이 5. 이 weight 비율에 따라 target latency(10ms) 안에서의 time slice 배분도 달라져 **task1=7.5ms, task2=2.5ms**(비율 3:1 — 실제 CFS의 nice-to-weight 표 값인 nice0=1024, nice5=335의 비율 1024/335≈3.06과 근사적으로 일치). 실제 실행시간은 그대로 **task1=40ms, task2=30ms**라고 둔다.
+  - 계산된 vruntime: **task1=40ms**(기준 weight라 변환계수 1, 변화 없음), **task2=9ms**(강의에서 언급된 값 — 실제 실행시간 30ms와 다름).
+  - **⚠ 수치 불일치 기록**: 교수는 이 직후 "task2가 원래 실행해야 하는 것보다 더 많이 실행돼서 vruntime이 예상보다 높아졌다"고 설명했는데, 이는 vruntime이 30ms보다 **커야** 한다는 뜻이다(표준 CFS 공식대로면 30×(1024/335)≈91.7ms). 즉 강의에서 말한 "9ms"라는 값과 바로 뒤따른 설명이 서로 맞지 않는다 — 발화 혹은 STT 과정에서 자릿수 일부가 누락됐을 가능성이 있다(예: "92"가 "9"로). 이 노트는 강의에서 실제로 언급된 숫자(9ms)를 그대로 남기되 이 불일치를 명시해 둔다. **확실한 것은 방향성이다**: weight가 기준보다 작은(=nice가 더 높은) task는 실제 실행시간 대비 vruntime이 더 빠르게 증가하고, 그 결과 "이미 자기 몫 이상을 받은 것"으로 간주되어 앞으로 CPU 기회를 더 적게 받는다.
+  - (참고: 강의 중 "weight가 가벼우면 vruntime이 더 천천히 증가한다"는 문장 직후 "weight가 작으면 증가폭이 더 커진다"는, 서로 모순되는 두 문장이 연달아 나왔다 — 위에서 채택한 방향(작은 weight → 빠른 vruntime 증가)이 표준 CFS 동작 및 뒤따른 설명과 일치하는 쪽이다.)
+
+### 50. CFS의 Time Slice 계산과 스케줄링 흐름 — Red-Black Tree, Leftmost Node, 선점 조건
+
+- **Time slice 계산**: CFS도 선점형(preemptive)·round-robin류 스케줄러라 여전히 time slice 개념이 있다 — `time_slice(task) = target_latency × (task_weight ÷ 전체 weight 합)`. target_latency 자체는 커널이 여러 요인을 고려해 설정하는 값(대략 100~200ms 수준; 세부 결정 규칙은 "외울 필요 없다"고 언급됨).
+- **가장 작은 vruntime을 어떻게 빠르게 찾을까?**: O(1)처럼 배열·리스트를 쓴다면 매번 전체를 훑어야 해 O(n)이 걸린다. 이 복잡도를 줄이기 위해 CFS는 **red-black tree**를 도입 — 삽입·삭제·탐색이 모두 **O(log n)**.
+- **Run queue 구조**: 리눅스에는 실시간(real-time)용 run queue(100개의 우선순위, 100개의 이중연결리스트 — O(1) 시절 개념의 계승)와, CFS용 run queue(일반 task용, **단 하나의 red-black tree**)가 별도로 존재한다. 일반적인 애플리케이션 task는 대부분 CFS run queue에 있다. CFS의 RB tree는 vruntime을 키로 정렬되며, 다음에 실행할 task는 **가장 왼쪽(leftmost) 노드**다.
+- **스케줄링 흐름(스케줄러 틱마다 — CFS 전용은 아닌 일반적 개념)**:
+  1. 매 스케줄러 tick마다 타이머 인터럽트가 발생하고, 스케줄러는 먼저 **선점 가능 여부(preemptibility)**를 확인한다.
+  2. 현재 실행 중인 task의 타임 슬라이스에서 경과된 tick 주기만큼을 차감 — 0 이하가 되면 플래그를 세팅한다 (**조건 A: 타임 슬라이스 소진**).
+  3. 현재 task의 vruntime을 갱신 — 갱신된 vruntime이 (RB tree의 leftmost, 즉) 다음 task의 vruntime을 넘어서면 플래그를 세팅한다 (**조건 B: 이미 다른 task보다 더 많이 실행함** — 예: 다음 task의 vruntime이 50이고 현재 task가 40에서 42로 올라가는 순간 이 조건이 충족).
+  4. 스케줄링 시점에 이 플래그를 확인 — 세팅돼 있으면, 현재 task를 CPU에서 내려 RB tree에 삽입하고(**enqueue**), tree에서 leftmost task를 꺼내(**dequeue**) CPU에서 실행시킨다. 삽입·삭제 모두 O(log n).
+- 여기까지가 리눅스 역사상 핵심적인 두 스케줄러, **O(1)과 CFS**의 전체 그림이다.
+
+### 51. "Is CFS Always Good?" — The Battle of the Schedulers 논문 (CFS vs FreeBSD ULE)
+
+- **문제 제기**: CFS가 항상 옳은가? 이를 뒷받침하는 실제 연구 논문이 제시됨 — **"The Battle of the Schedulers: FreeBSD ULE vs. Linux CFS"**, USENIX **ATC**(Annual Technical Conference)에 게재. (교수 언급: 시스템 분야 최상위 학회는 OSDI·SOSP이고, ATC·EuroSys가 그 다음 급이며 종종 실용적인 이슈를 다룬다.)
+- **비교 대상**: FreeBSD의 스케줄러는 **ULE**라는 이름을 갖는다(참고로 macOS도 BSD 계열 기반). 이 논문은 ULE와 CFS를 비교한다.
+- **두 설계 철학의 차이**:
+  - **CFS**: 이름 그대로 완전한 공정성을 추구 — 단 하나의 red-black tree만 있고, interactive/batch 구분이 없다. Vruntime 순으로 정렬되며, leftmost가 항상 선택되고, 타임 슬라이스가 소진되면 다시 run queue로 돌아간다.
+  - **ULE**: interactive용/batch용 **두 개의 별도 run queue**를 둔다. Interactive task가 batch task에 대해 **절대적인 우선순위**를 가지며, batch task는 interactive run queue가 완전히 빌 때만 실행될 수 있다.
+  - ULE가 이렇게 설계돼도 문제가 되지 않는 이유(설계 근거): interactive task는 대부분의 시간을 **sleep** 상태로 보내므로, 그 사이사이 batch/CPU-bound task가 실행 기회를 얻는다는 전제.
+- **실험 결과**: 전반적으로는 두 스케줄러 사이에 뚜렷한 성능 차이가 없었다(경우에 따라 ULE가 나을 때도, CFS가 나을 때도 있었고 명확한 이유는 없었다고 언급). 다만 interactive task와 CPU-bound(배치) task를 동시에 돌린, 다소 극단적인 시나리오의 그래프가 인상적이다:
+  - **CFS**: 두 태스크 모두 CPU의 약 **15%**씩 거의 같은 기울기로 받는다 — "완전히" 공정하다고까진 못해도 거의 공정하며, starvation이 없다.
+  - **ULE**: interactive task가 먼저 끝까지 실행되고 그 이후에야 batch task가 실행된다 — batch task는 약 **150초**까지 기다려야 한다(=starvation). Interactive task 입장에서는 더 짧은 지연시간(더 높은 응답성)을 얻지만, 공정성 측면에서는 batch task가 기아 상태에 빠진다.
+
+### 52. CFS의 한계 → EEVDF 등장 배경
+
+- CFS는 fairness에만 초점을 맞춘다 — vruntime이 가장 작은 task를 고르고, CPU 점유율은 오직 weight로 결정된다. Batch/interactive 구분 없이 모두에게 동일하게 "공정한" 기회를 준다.
+- **핵심 한계: latency(지연시간)를 전혀 고려하지 않는다.** Nice값은 그 task가 **얼마나 많은** CPU 시간을 받는지(점유율, rate)를 통제할 뿐, 그 CPU 시간을 **얼마나 빨리** 받고 싶어하는지는 표현하지 못한다. 서로 다른 task들이 결국 같은 CPU 점유율(rate)을 갖게 되더라도, 이 task들은 서로 다른 지연시간 요구사항을 가질 수 있다 — interactive task는 더 짧은 지연시간을 필요로 하지만 CFS는 이 문제를 다루지 못한다. **이것이 EEVDF가 등장한 배경**이다.
+
+### 53. EEVDF 소개 — 개념과 목표만 (메커니즘은 다음 시간 예고)
+
+- **EEVDF = Earliest Eligible Virtual Deadline First**. 2023년 **Linux 6.6**에 추가된 비교적 최신 스케줄러(교수 언급: 일부 안드로이드 폰이나 우분투 서버는 아직 이보다 오래된 커널을 쓰고 있을 수 있음). **CFS의 후속(successor)이자 확장** — 기반 개념은 CFS와 같고, 복잡도도 여전히 **O(log n)**이다.
+- 핵심 아이디어의 원형(academic idea)은 사실 **1990년대 중후반**에 이미 발표됐던 것(정확한 연도는 교수도 기억하지 못함 — 약 30년 전). 다만 리눅스 개발자들이 §52의 CFS 문제를 풀기 위해 이 개념을 커널에 채택했다.
+- **목표**: CFS의 fairness를 유지하면서, **latency-sensitive 스케줄링의 응답성**을 개선하는 것.
+- **핵심 개념(용어만 언급됨 — 계산 방식은 이번 강의에서 다루지 않음)**: **lag**, **eligibility**, **eligible time**, **virtual deadline**. 이 값들이 스케줄링 결정 등에 쓰인다고만 언급됐다.
+- **CFS vs EEVDF의 매우 단순화된 개념 비교**(교수: "정확하진 않지만 개념 전달용"): 두 task가 같은 nice값(=같은 weight)이라고 가정할 때, CFS에서는 완전히 공정하기 때문에 interactive task가 batch/interactive 구분 없이 실제 시간(real time) 상 자기 차례가 될 때까지 기다려야 할 수 있지만, EEVDF에서는 이 interactive task가 더 이른 시점에 CPU 기회를 얻을 수 있다.
+- **중요**: EEVDF는 CFS(fairness/vruntime)와 **EDF(Earliest Deadline First, 실시간 시스템의 데드라인 기반 스케줄링)**라는 두 개념을 결합한 것이다 — "가장 이른 데드라인을 가진 task가 가장 높은 우선순위를 갖는다"는 것이 핵심. **다만 이 결합을 정확히 어떻게 구현하는지(vruntime과 virtual deadline을 어떻게 합치는지)는 이번 강의에서 다뤄지지 않았고, 다음 시간으로 명시적으로 예고됐다** — 이 노트는 그 메커니즘을 추측해서 채우지 않는다.
+
+### 54. EDF(Earliest Deadline First) — Worked Example
+
+- EEVDF를 이해하기 위한 배경지식으로, 실시간 스케줄링의 고전적 정책인 **EDF**를 다뤘다. 핵심 규칙: **가장 이른 데드라인을 가진 task가 가장 높은 우선순위**를 갖는다.
+- **Worked example**: 세 태스크가 모두 **T0**에 도착한다고 가정.
+  - **Task A**: 실행시간 **3ms**, 데드라인 **7ms**.
+  - **Task B**: 실행시간 **2ms**, 데드라인 **4ms**.
+  - **Task C**: 실행시간 **1ms**, 데드라인 **6ms**.
+- **스케줄링 순서(EDF 규칙 적용)**:
+  1. T0에서 세 데드라인(7, 4, 6)을 비교 → 가장 이른 것은 B(4ms) → **B가 먼저 선택**돼 2ms 동안 실행(T2에서 종료).
+  2. 남은 A(데드라인 7ms)와 C(데드라인 6ms)를 비교 → C가 더 이른 데드라인 → **C가 선택**돼 1ms 동안 실행(T3에서 종료).
+  3. 마지막으로 **A가 선택**돼 3ms 동안 실행(T6에서 종료 — 데드라인 7ms 이내로 충족).
+  - **최종 순서: B → C → A** (누적 실행시간 2+1+3=6ms, 세 태스크 모두 각자의 데드라인 이내에 종료).
+- **EDF의 한계**: 각 task의 **정확한 데드라인 정보**가 필요하고, 새로운 task가 도착할 때마다 데드라인을 비교해야 하므로 **컨텍스트 스위칭 오버헤드**가 커질 수 있다 — 새 task의 데드라인이 현재 실행 중인 task보다 이르면 항상 컨텍스트 스위치가 일어나기 때문. 그래서 EDF는 주로 **RTOS(실시간 운영체제)**에서 쓰이고, 범용 스케줄러는 이를 직접 채택하지 않는다 — 다만 **EEVDF는 여기서 데드라인 개념을 "빌려온" 것**이라는 연결점만 언급됨.
+- 강의는 여기서 마무리됐고, "**EEVDF는 다음 시간에 이어서 다루겠다**"고 명시적으로 예고됨 — 이 노트는 EEVDF의 세부 메커니즘(lag/eligibility 계산 등)을 추측해서 채우지 않는다.

@@ -398,3 +398,197 @@
 - 비교의 기준점으로 "Deep Learning Basics" 강의 노트 **26페이지**에 있던 centralized training의 학습 과정을 다시 가져옴: $W_0$를 무작위 초기화한 뒤, 여러 epoch/iteration에 걸쳐 학습 — **매 iteration마다 데이터셋 $D$ 전체를 사용해 gradient를 계산**하고 모델을 업데이트하는 과정을 반복($T$ = iteration index). 여기서는 **full-batch gradient descent**를 가정하므로 표기에 $N$(worker 수)이 등장하지 않는다.
 - Data parallelism 쪽에서는 이 위에 **추가적인 과정**이 붙는다고 언급하며 새 파라미터 **$N$(worker node 개수)**을 도입: 모든 worker node가 parameter server로부터 **동일한 모델**을 받았기 때문에, 이후 **모든 worker가 병렬로 gradient를 계산하는 과정**이 추가된다는 점까지만 언급되었다.
 - **여기서 시간 종료(t=2772, 11시)**: 교수가 "이 슬라이드부터는 금요일에 이야기하겠다"고 명시적으로 말하며 강의를 마쳤다. 즉 **centralized training과의 실제 비교(수렴 결과가 같은지에 대한 증명/설명)는 이번 시간에 완료되지 않았고, 다음 시간(금요일)으로 명시적으로 이월**되었다. 마찬가지로 §34 outline 중 memory/delay 분석, 다른 optimizer로의 확장, fully decentralized 설정도 전부 금요일 이후 몫으로 남았다.
+
+---
+
+## Day 6 (2026-09-18) — Data Parallelism 완결: Momentum/Adam 통합, Fully Decentralized AllReduce, ZeRO-DP
+
+> 소스: 2026-09-18(금) 강의 녹음 STT + 슬라이드. **이번 시간 전에 강의안 덱이 개정되었다**: Day 5에서 쓰인 "Week 3 Data Parallelism.pdf"(49페이지, 47~49페이지가 미완성인 채로 "Conclusion / Thank you"로 급하게 끝나는 버전)가, 1~46페이지는 동일하되 47페이지 이후가 크게 확장·재구성된 **"full version"(총 77페이지)**으로 교체되었다 — Integration with Momentum, Integration with Adam, Revisiting Parameter Memory, 파라미터 서버 없는 fully-decentralized AllReduce 기반 data parallelism, ZeRO-DP, 그리고 실제 Conclusion이 새로 추가되었다. **아래 페이지 번호는 모두 이 77페이지 신판 기준**(구판 47~49페이지에 해당하던 자리는 신판에서 47페이지 이후로 재배치·확장됨). Day 5, t=2772에서 "이 슬라이드부터는 금요일에"라며 미뤄졌던 (1) centralized training과의 비교의 실제 완결(§34의 항목 2), (2) memory·delay 분석(항목 3), (3) 다른 optimizer로의 확장(항목 4), (4) fully decentralized 설정(항목 5) — 이 네 가지가 모두 이번 시간(t=0~6099)에서 다뤄지고, 마지막으로 ZeRO-DP와 진짜 Conclusion까지 이어진다.
+
+### 41. 복습 및 오늘의 질문 목록 재확인
+
+- 강의 시작과 함께 지난 시간(Day 5) 배운 data parallelism 알고리즘을 다시 한 번 정리: 데이터셋을 겹치지 않게 여러 청크로 나누고 각 노드에 할당(합집합 = 원본 데이터셋) → 학습이 시작되면 모든 워커가 parameter server로부터 현재 모델을 다운로드 → 각 워커가 **자신에게 할당된 데이터만 사용해** 로컬에서 gradient를 계산 → 이 gradient들을 parameter server로 전송 → server가 **취합(aggregate)**해서 모델을 업데이트 → 새 모델을 다시 모든 노드에 전송 → 만족스러운 성능을 얻을 때까지 반복.
+- 이 알고리즘을 두고 남아 있던 질문들을 재확인: (1) 정말 centralized training과 같은 성능을 내는가? (2) memory와 delay에는 어떤 영향이 있는가? (3) 장점은 무엇인가? (4) SGD with momentum이나 Adam 같은 다른 optimizer와 통합할 수 있는가? (5) parameter server가 항상 필요한가 — parameter server 자체가 (gradient 수신·모델 재전송 과정에서) 심각한 통신 병목을 일으킬 수 있기 때문.
+- 오늘은 이 질문들을 순서대로 다룬다고 예고하며, 먼저 centralized training과의 비교(full-batch gradient descent 경우)부터 다시 시작.
+
+### 42. Comparison with Centralized Training — Full-batch Gradient Descent 하의 동등성 증명 (p.29–32)
+
+- **세팅 재확인**: centralized training은 $W_0$를 무작위 초기화한 뒤 매 iteration마다 데이터셋 $D$ 전체로 gradient를 계산·업데이트하는 과정을 반복(1·2주차 노트 26페이지). Data parallelism 쪽은 여기에 워커 $i$에게 $D_i$를 할당하는 과정이 추가되며, $\bigcup_i D_i = D$이고 서로 겹치지 않는다(no overlap) — Day 5와 동일한 전제.
+- **핵심 질문**: 두 프로세스가 동등한지 확인하려면, **매 iteration에서 모델을 업데이트하는 데 쓰이는 변화량(=gradient)이 두 경우에 같은지**만 확인하면 된다 — 같으면 $W_0$가 같다는 가정 하에 완전히 같은 성능, 다르면 다른 성능으로 이어진다.
+- **증명 전개**: parameter server에서 취합된 gradient는
+  $$G_t^{DP} = \frac{1}{N}\sum_{i=1}^{N} G_t^i$$
+  이고, $G_t^i$는 워커 $i$에 할당된 데이터 $D_i$에 대한 평균 gradient — 즉 gradient의 정의를 그대로 적용하면
+  $$G_t^i = \frac{1}{|D_i|}\sum_{x \in D_i} \nabla L(x; W_t)$$
+  **모든 워커가 동일한 샘플 개수**를 갖는다고 가정하면 $|D_i| = |D|/N$이므로 이를 대입하면 $N$ 항이 소거되고,
+  $$G_t^{DP} = \frac{1}{|D|}\sum_{x \in D} \nabla L(x; W_t) = G_t^{centralized}$$
+  즉 **워커별 gradient 합을 다시 전체 워커에 대해 합산한 것이 곧 전체 데이터셋에 대한 gradient 합과 같아진다.**
+- **결론**: full-batch gradient descent에는 학습 과정에 **무작위성(randomness)이 전혀 없다**(임의의 mini-batch를 샘플링하는 게 아니라 모든 데이터를 다 쓰기 때문) — 따라서 두 알고리즘이 정확히 같은 $W_0$에서 출발한다고 가정하면, **정확히 같은 성능**으로 이어진다.
+- **샘플 수가 워커마다 다를 때**: 정확한 평균 대신 **가중합(weighted sum)**을 쓰면 된다 — 예를 들어 워커 1이 워커 2보다 데이터가 많다면 데이터 샘플 수에 비례하는 더 큰 가중치를 부여해서 동등성을 유지한다. 실무적으로는 애초에 계산 능력이 비슷한 머신이면 데이터셋을 정확히 등분해서 할당하면 되고, 약간의 불균형이 있으면 가중 평균으로 조정한다.
+- **부연 질문(교수가 직접 던진 확장 질문) — "워커가 직접 gradient descent를 하고 업데이트된 모델을 서버로 보내면 어떨까?"**: 지금까지는 워커가 gradient만 계산해서 서버로 보내고, 서버가 그 gradient로 실제 경사하강 스텝(모델 업데이트)을 수행했다. 만약 반대로 **각 워커가 자신의 gradient로 직접 한 스텝 경사하강을 수행**하고, 그 **업데이트된 모델**을 서버로 전송한다면? 간단한 수식으로 확인할 수 있듯, 이것도 **정확히 같은 결과**로 이어진다 — 각 워커에서 업데이트된 모델들의 평균을 취하는 것이, 평균 gradient로 (서버가) 모델을 업데이트하는 것과 수학적으로 동일하기 때문이다. 이 내용을 넣은 이유는 "왜 굳이 gradient를 전송하고 서버가 업데이트해야 하는가, 워커 쪽에서 업데이트하면 안 되는가"라는 질문에 대한 답 — **워커 쪽에서 업데이트해도 결과는 같다.** (다만 자원 사용 측면의 차이는 뒤 §48의 Q1에서 다시 다룬다.)
+
+### 43. Comparison with Centralized Training — Mini-batch Gradient Descent의 경우 (p.33–35)
+
+- **Mini-batch GD 리마인드**(1·2주차 노트 27페이지): 매 iteration마다 $B$개 데이터 샘플로 이루어진 미니배치를 무작위로 뽑아 gradient를 계산하고 모델을 업데이트, 한 epoch(전체 데이터셋을 다 훑음)이 끝나면 데이터셋을 셔플하고 다시 반복. Full-batch와 달리 이제는 학습 과정에 **무작위성(randomness)**이 존재한다.
+- **Data parallelism에서 미니배치의 의미**: 목표로 하는 유효 미니배치 크기가 $B$(centralized 기준)라면, $N$개의 워커 각각은 $B/N$개의 샘플만으로 gradient를 계산하면 된다 — 이 $N$개의 gradient를 server가 취합하면, 그 결과는 실질적으로 $B$개의 샘플로 계산한 gradient와 같은 역할을 한다.
+- **셔플링 절차**: 한 epoch의 첫 미니배치에서는 각 워커가 자신의 shard $D_i$를 (독립적으로) 셔플한 뒤 미니배치 $\tilde{D}_i$를 뽑는다. 각 워커는 $B/N$개의 샘플로 이루어진 $\tilde{D}_i$의 모든 샘플을 사용해 gradient를 계산하고, 그 gradient를 server로 전송 — 다음 iteration에서는 다음 미니배치(계속 $B/N$개씩)로 같은 과정을 반복해 유효 미니배치 크기 $B$를 유지한다. *(강의 중 슬라이드 표기 오타가 지적됨: $D_i$로 잘못 표기된 부분이 실제로는 $\tilde{D}_i$가 되어야 한다고 교수가 즉석에서 정정.)*
+- **Q&A성 부연 — "그냥 각 워커에서 B개씩 뽑으면 안 되나?"**: 할 수는 있지만, 그러면 유효 미니배치 크기가 $B$가 아니라 (워커가 3개라면) $3B$를 쓰는 것과 비슷한 효과가 되어 **완전히 다른 성능**으로 이어진다. 목표 미니배치 크기가 정해져 있다면, 워커당 처리할 샘플 수($B/N$)를 정확히 맞춰야 한다 — 이는 centralized 설정에서도 미니배치 크기를 바꾸면 성능이 크게 달라지는 것과 같은 원리.
+- **메모리로의 예고적 연결**: 목표 미니배치 크기가 고정되어 있으면 워커당 처리 샘플 수가 줄어들고, activation memory가 (처리하는 샘플 수, 즉) 미니배치 크기에 비례하므로 이는 곧 activation memory 절감으로 이어진다 — 자세한 내용은 §44에서.
+- **동등성 재질문**: 이제는 (1) 미니배치 샘플링 자체의 무작위성, (2) 각 노드에서 독립적으로 수행되는 셔플링의 무작위성 때문에, full-batch처럼 "완전히 동일"하다고 말할 수 없다. 단 한 번의 iteration만 비교하면 당연히 다른 결과가 나온다 — 하지만 이는 **centralized training 자체도 마찬가지**: 같은 모델을 SGD로 다섯 번 학습시켜도 무작위성 때문에 다섯 개의 서로 다른 최종 모델이 나온다. 진짜 질문은 "**통계적으로**" 같은 성능을 내는가이다.
+- **답: 통계적으로는 같다.** 미니배치가 uniformly at random 샘플링된다는 가정 하에, distributed training과 centralized training의 **수렴 거동(convergence behavior)**을 분석하는 이론 논문들이 다수 존재한다 — 세부 유도는 강의 범위 밖. 강볼록 함수(strongly convex)의 경우 두 방식 모두 정확히 **global optimum**에 도달함을 보일 수 있고, 비볼록(non-convex) 최적화의 경우에는 global optimum을 보장할 수 없지만 대신 알고리즘이 **stationary point**(gradient가 0에 수렴하는 점)로 수렴한다는 것을 보일 수 있다. 결론적으로, 두 프로세스가 엄밀하게 동일하다는 것을 증명하지는 않았지만 **통계적으로 같은 성능**을 낸다고 이해하면 된다.
+
+### 44. Data Parallelism의 실질적 이점 (1) — Memory 재검토 (p.37–42)
+
+- **문제의식**: 지금까지 본 것은 DP가 (통계적으로) centralized와 같은 성능을 내면서 **통신만 추가**된다는 것뿐이었다 — 그렇다면 왜 이걸 써야 하는가? 답은 memory와 delay에 있다.
+- **Parameter memory per GPU (SGD의 경우)**: 2주차 11페이지의 토이 예시(6개 layer, model size $m = \theta_1+\cdots+\theta_6$, activation size $\alpha = a_1+\cdots+a_5$)를 다시 가져와, 모델 크기를 10이라 하면 SGD의 parameter memory는 그 두 배인 20(gradient 1개분 + model 1개분)이 된다 — 이는 centralized에서 이미 본 정의 그대로.
+- **DP에서도 SGD의 parameter memory는 줄지 않는다**: 각 워커 노드가 여전히 **전체 모델을 그대로 보유**하고, 그 모델을 이용해 직접 backpropagation을 수행해 gradient를 계산해야 하기 때문 — 그래서 SGD를 쓰는 한 워커당 필요한 memory는 여전히 모델 크기의 두 배다. **즉 SGD의 경우, GPU당 필요한 parameter memory는 centralized training과 data parallelism이 동일하다** — data parallelism이 parameter memory 관점에서는 아무 이점을 주지 못한다. (momentum·Adam 등 다른 optimizer의 경우는 다르다는 것이 뒤 §47에서 밝혀진다 — 여기서는 아직 그 통합 방식을 다루지 않았으므로 판단을 유보.)
+- **Activation memory per GPU**: activation memory는 처리하는 샘플 수, 즉 미니배치 크기에 비례한다(2주차 28페이지 재확인). Centralized에서 목표 미니배치가 $B$면 activation memory는 $B$에 비례. DP에서는 목표가 $B$로 동일해도, 각 워커는 forward pass에서 $B/N$개의 샘플만 처리하면 되므로 **워커당 activation memory가 $1/N$로 줄어든다.**
+  - 단, **전체 activation memory의 총합(모든 워커의 activation memory를 다 더한 값)은 줄지 않는다** — 어디까지나 GPU 한 대당 **peak** activation memory만 줄어드는 것.
+  - 이는 저비용 머신 여러 대만 있고 단일 머신으로는 학습을 돌릴 수 없는 상황에 특히 유용하다 — 그런 여러 대를 함께 써서 data parallelism을 적용하면 학습이 가능해진다.
+- **Worked example(교수가 직접 든 예시, 수치 자체는 예시일 뿐이라고 명시)**: centralized에서 미니배치 크기 500을 쓸 때의 parameter memory·activation memory가 특정 값이라고 하자. 이제 10개의 서로 다른 GPU로 분산 학습을 하면서 데이터셋을 균등하게 나눈다면, 각 워커는 정확히 $500/10=50$개의 샘플만 반복마다 처리하게 되고, **GPU당 activation memory는 10%로 감소**한다. 예컨대 12GB급의 저비용 GPU 여러 대만 있고 비싼 고사양 GPU가 없는 상황이라도, 목표 미니배치 크기를 유지하면서 이런 식의 data parallelism을 쓰면 **학습이 가능**해진다.
+- **결론**: 목표 미니배치 크기가 고정되어 있다는 가정 하에, activation memory 감소는 data parallelism이 주는 **확실한(unambiguous)** 이점이다.
+
+### 45. Data Parallelism의 실질적 이점 (2) — Delay 분석 (p.43–46)
+
+- Delay 측면에서는 data parallelism의 **장점과 단점이 공존**한다.
+- **장점**: 단일 머신은 어느 시점에도 그 한 대의 연산 능력만 낼 수 있지만, 이제는 여러 워커가 **동시에** 병렬로 연산하므로 시간 단계당 처리 가능한 데이터량이 늘어난다. 목표 미니배치가 $B$로 고정되어 있다면 워커당 처리할 샘플 수도 $B/N$로 줄어드는데, 이를 여러 워커가 병렬로 처리하므로 **속도(처리량)가 올라간다** — 각 워커가 더 적은 데이터를 처리하면서, 그 처리 자체는 병렬로 이뤄지기 때문.
+- **단점/불확실성**: 이제 통신을 고려해야 한다 — (1) 각 워커가 gradient를 parameter server로 업로드하는 통신, (2) server가 업데이트된 모델을 모든 노드에 다시 전송(broadcast)하는 통신. 어느 쪽이 더 큰 병목인지는 **어떤 머신을 쓰고 어떻게 연결되어 있는지에 따라 다르며, 일반화된 답이 없다.**
+- **Delay 공식(슬라이드 그대로)**: 한 training round당 delay는
+  $$\text{Delay} \approx \underbrace{T_{\text{comp}}}_{\propto\, B/N} + \underbrace{T_{\text{grad upload}}}_{\propto\, m} + T_{\text{server-side update}}(\text{모든 gradient 도착을 대기}) + T_{\text{model broadcast}}$$
+  형태로 근사되며, GPU 한 대 기준 통신 비용은 **$2m$**(업로드 + 다운로드, $m$ = 모델 크기)이다.
+- **핵심 결론 — "모른다(unknown)"**: 미니배치 크기 $B$가 고정되어 있을 때, data parallelism이 centralized training보다 실제로 더 빠른지는 **일반적으로 말할 수 없다.** GPU당 연산 시간은 병렬 처리 덕분에 $1/N$만큼 확실히 줄어들지만, 통신 지연이 존재하고 이게 지배적이면 오히려 $B$개의 데이터를 처리하는 데 **더 오래 걸릴 수도** 있다.
+- **모델 크기와의 관계**: 통신 지연이 상대적으로 작아야만 DP가 centralized보다 빨라진다 — 그런데 **대규모 모델**을 다루는 많은 시나리오에서는 이 조건이 성립하지 않는다. gradient 크기는 (모든 파라미터를 업데이트한다고 가정하면) 정확히 모델 크기와 같기 때문에, 모델이 커질수록 통신 부담도 함께 커진다. 즉, **같은 미니배치 크기를 목표로 centralized와 비교하면, data parallelism의 속도 이점이 실제로는 보이지 않을 수도 있다.**
+- **실무적 해법**: data parallelism의 이점을 실제로 살리려면, 각 GPU에서 **상당한 양의 연산**을 하도록 만들어야 한다 — 통신은 덜 자주, 각 GPU가 처리하는 데이터 샘플 수는 많이 가져가서 GPU 연산 활용도(utilization)를 극대화하고, 전체 시간에서 통신이 차지하는 비중을 줄여야 한다. 실제 산업계(대기업)에서는 **각 노드에서 대량의 데이터를 처리**하는 방식으로 이 이점을 취한다 — 같은 미니배치를 목표로 하는 대신, 여러 GPU를 이용해 **유효 미니배치 크기 자체를 늘려서** 이점을 극대화하는 것.
+- **정리**: memory(특히 activation memory) 이점은 확실하지만, delay(속도) 이점은 통신 대비 연산 비중에 달린 **조건부** 이점이다.
+
+### 46. Data Parallelism을 다른 Optimizer로 확장 (1) — Integration with Momentum (p.48–50)
+
+- **Centralized training에서 SGD with momentum 복습**(1·2주차 노트 31~34페이지): 매 업데이트마다 방향을 너무 급격히 바꾸지 않기 위해, 현재 gradient $g_t$뿐 아니라 이전 momentum을 유지한 채 업데이트한다 —
+  $$m_t = \alpha \cdot m_{t-1} + g_t$$
+- **질문**: data parallelism에서 이 momentum buffer $m_t$를 어디에 둬야 하는가? 워커마다 각자 유지해야 하는가, 아니면 서버에?
+- **답 — parameter server에만 momentum buffer를 유지한다.** 이유는, SGD momentum 공식에서 "현재 gradient $g_t$" 자리에 (data parallelism의 핵심인) **취합된 평균 gradient**를 그대로 대입하기만 하면 되기 때문이다. 즉 server가 워커들로부터 받은 gradient들의 평균 $G_t = \frac{1}{N}\sum_i G_t^i$를 구한 뒤, 그 $G_t$를 위 momentum 공식의 $g_t$ 자리에 넣어 $m_t$를 갱신하고, 이 momentum으로 모델을 업데이트한 다음, **업데이트된 모델만** 다시 워커들에게 broadcast한다. 워커들의 역할(gradient 계산 → 업로드)은 plain SGD DP와 완전히 동일.
+- **결과**: 워커 쪽은 momentum을 전혀 저장할 필요가 없다 — 이는 곧 워커 쪽 parameter memory 절감으로 이어진다(정확한 수치는 §47).
+- **통신 비용은 늘지 않는다**: momentum buffer는 서버에만 존재하고 **절대 통신되지 않는다** — 그래서 plain SGD 기반 distributed training과 비교해 **추가적인 통신이 전혀 없다.** 유일한 차이는 서버가 momentum buffer를 유지하면서 모델을 (plain gradient descent 대신 momentum 공식으로) 다른 방식으로 업데이트한다는 점뿐이다.
+- (momentum을 워커 쪽에 두는 선택지도 있다고 언급되지만, 그 구체적 트레이드오프는 parameter server가 아예 없는 §53(fully decentralized) 맥락에서 다뤄진다.)
+
+### 47. Data Parallelism을 다른 Optimizer로 확장 (2) — Integration with Adam (p.51–53)
+
+- **Centralized training에서 Adam 복습**(1·2주차 노트 37페이지): SGD momentum의 아이디어($m_t$, 방향 유지)와 RMSprop의 아이디어($v_t$, 학습률을 자동 조절하는 curvature/제곱 gradient의 이동평균)를 결합 —
+  $$m_t = \alpha \cdot m_{t-1} + (1-\alpha)\cdot g_t, \qquad v_t = \beta \cdot v_{t-1} + (1-\beta)\cdot (g_t)^2$$
+  이며, 여기서 $g_t$는 현재 미니배치로부터 얻은 현재 gradient다.
+- **DP로의 통합은 momentum과 완전히 같은 철학**: $m_t$, $v_t$ 둘 다 **parameter server에만** 유지하고, 워커는 없다. 워커의 역할은 data-parallel SGD와 정확히 동일 — gradient를 계산해서 서버로 업로드. 서버는 이 gradient들을 취합(평균)한 뒤, 그 취합된 gradient로 Adam이든 SGD momentum이든 RMSprop이든 원하는 optimizer 업데이트 룰을 실행할 수 있다. 여기서도 $G_t$(모든 워커 gradient의 평균)와 $G_t^i$(워커 $i$가 자신에게 할당된 데이터의 미니배치로 계산한 gradient)라는 동일한 표기가 그대로 쓰인다.
+- **역시 추가 통신 비용이 없다**: optimizer state($m_t$, $v_t$)는 서버에만 있고 절대 전송되지 않는다 — plain SGD DP 대비 추가 통신 없이, **서버 쪽에 평균 내기·가중합·norm 계산 같은 추가 연산**만 붙을 뿐이다.
+
+### 48. Revisiting Parameter Memory — Optimizer별 GPU당 파라미터 메모리 비교 (p.54–55)
+
+Parameter server를 사용한다고 가정할 때, GPU(워커) 한 대당 필요한 parameter memory:
+
+| Optimizer | Centralized training | Data Parallelism (per GPU) |
+|---|---|---|
+| SGD | $2m$ | $2m$ |
+| SGD with Momentum | $3m$ | $2m$ |
+| Adam | $4m$ | $2m$ |
+
+($m$ = model size)
+
+- **왜 SGD는 차이가 없는가**: §44에서 본 것처럼, 워커는 backpropagation을 위해 어차피 모델(1개분)과 gradient(1개분) 합쳐 $2m$을 들고 있어야 한다 — SGD에는 애초에 momentum 같은 추가 optimizer state가 없으므로 서버로 오프로드할 것도 없다.
+- **왜 momentum·Adam은 DP 쪽이 더 적은가**: §46–47에서 본 것처럼 momentum buffer($m_t$)나 Adam의 $v_t$ 같은 **추가 optimizer state가 parameter server에서만 유지**되고 워커에는 존재하지 않기 때문 — DP에서는 optimizer 종류와 무관하게 워커당 필요한 것은 항상 "모델($m$) + gradient($m$) = $2m$"뿐이고, 나머지 optimizer state는 전부 서버로 오프로드된다.
+- **정리**: data parallelism이 parameter memory를 줄여주는지 여부는 **optimizer에 따라 다르다** — Day 5 §35에서 "모델을 그대로 복제하므로 parameter memory를 줄여주지 않을 수도 있다"고 예고했던 것에 대한 구체적 답: **SGD라면 그 예고대로 줄지 않지만, momentum·Adam처럼 optimizer state가 있는 optimizer라면 (parameter server 덕분에) 실제로 줄어든다.**
+
+### 49. 수업 중 Q&A — 서버가 꼭 업데이트해야 하나? / Batch Normalization과의 상호작용 (p.56–57)
+
+- **Q1. Parameter server가 꼭 모델 업데이트를 수행해야 하는가? 워커 노드가 대신 업데이트하면 안 되는가?**
+  A: 할 수 있다 — 워커 노드들이 (서버로부터 받거나 all-reduce로 얻은) 같은 평균 gradient를 이용해 각자 모델을 업데이트해도 결과(정확도)는 동일하다. 단, 이 경우 momentum·Adam 같은 optimizer state를 **각 워커가 로컬에 유지**해야 하므로, 워커 쪽 parameter memory가 다시 $2m$(SGD) / $3m$(SGD momentum) / $4m$(Adam)로 **늘어난다** — 즉 §48에서 본 DP의 메모리 이점이 사라진다. 따라서 **parameter server가 워커보다 더 강력하고 메모리 여유가 있다면, 서버 쪽에서 모델을 업데이트하는 편이 자원을 절약**하는 선택이 된다.
+- **Q2. Batch normalization 레이어를 고려하면, data parallelism과 centralized training이 통계적으로 같은 모델을 만든다고 할 수 있는가?**
+  A: **아니다.** Centralized training에서는 batch normalization의 평균·분산($\mu$, $\sigma^2$)이 목표 미니배치 크기 $B$개의 샘플로 계산되지만, data parallelism에서는 각 GPU가 자신에게 할당된 $B/N$개의 로컬 샘플만으로 이 정규화 통계량을 계산한다 — 특히 워커별 데이터 분포가 서로 다르면(non-IID) 이 $\mu$, $\sigma^2$가 워커마다 달라지고, 결과적으로 (전역 분포로 계산했을 때와 비교해) **약간 다른 모델**로 이어질 수 있다. 이것이 batch normalization의 한계 중 하나이며, 이를 완화하기 위해 **group normalization**, **layer normalization** 같은 다른 정규화 기법들이 연구되어 왔다(강의에서는 원리를 다루지 않음).
+
+### 50. Parameter Server는 항상 필요한가? — Fully Decentralized 설정으로의 전환 (p.58–60)
+
+- 지금까지 살펴본 전체 과정에서 parameter server가 하던 **가장 핵심적인 역할은 결국 "모든 워커의 gradient 평균을 구하는 것" 하나**였다.
+- 문제 제기(Day 5 §39에서 예고됐던 문제의 재확인): 워커 수 $N$이 커질수록 server가 받아야 할 gradient 개수도, 다시 전송해야 할 모델의 수신처도 함께 늘어나 **server 자체에서 심각한 통신 병목**이 발생한다.
+- **질문**: parameter server 없이도, 즉 같은 평균 gradient를 얻는 것과 **정확히 같은 성능**을 내면서, data parallelism을 구현할 수 있는가?
+
+### 51. Preliminaries — 통신 프리미티브: Scatter / Gather / Reduce / Broadcast (p.61–63)
+
+본격적인 논의에 앞서 몇 가지 통신 용어를 정의(강의에서 자주 쓰이는 용어는 아니라고 언급하며 짚고 넘어감):
+
+- **Scatter**: 하나의 텐서를 여러 워커에 나눠 보내되, **워커마다 서로 다른 내용**을 보낸다.
+- **Gather**: 모든 워커로부터 값을 그대로 모아 받는다.
+- **Reduce**: gather와 달리, 받은 값들에 대해 **합(sum) 또는 평균 같은 집계 연산**을 적용한다 — 이것이 gather와 reduce의 핵심 차이.
+- **Broadcast**: 동일한 하나의 결과를 모든 워커에게 전송한다.
+
+이 용어로 다시 보면, **data parallelism은 결국 reduce(gradient 취합)와 broadcast(업데이트된 모델 전송)의 반복**이다 — 워커들이 gradient를 서버에 전송하면 서버가 이를 취합하는 것이 reduce, 서버가 업데이트된 모델을 다시 모든 워커에 전송하는 것이 broadcast. 지금까지 다룬 parameter-server 기반 알고리즘 전체가 이 두 연산의 조합이었을 뿐이다. **parameter server가 없다면, 이 reduce+broadcast를 서버 없이 어떻게 구현할지**가 다음 문제.
+
+### 52. Naive 접근과 그 한계
+
+- 가장 단순한(naive) 방법: parameter server 없이, **각 노드가 자신이 계산한 gradient를 시스템 내 다른 모든 노드에게 직접 전송**한다. 그러면 모든 노드가 서로 다른 모든 gradient를 받게 되고, 각자 평균 gradient를 계산해서 각자 모델을 업데이트할 수 있다 — 모든 노드가 **동일한 평균 gradient**로 업데이트하므로, parameter server 방식과 **정확히 같은 성능**을 얻는다.
+- **한계**: 이 방식은 모든 노드 쌍 사이에 통신이 발생해야 하므로(all-to-all), 그 전송 자체가 심각한 병목을 일으킨다. 그래서 "이걸 효율적으로 할 수 있는가"라는 질문이 제기되고, 여기서 어떤 **프로토콜(protocol)**을 도입하는 것이 낫다는 결론으로 이어진다.
+
+### 53. Data Parallelism in Fully Decentralized Settings — Ring All-Reduce & Recursive Halving (p.64–65)
+
+- **Ring All-Reduce**: 노드들을 **링(ring) 토폴로지**로 구성해서 통신한다. 기본 아이디어(강의에서 보여준 단계별 그림 기준): 각 노드가 먼저 자신의 gradient를 이웃 노드에게 전송하면, 그 이웃이 받은 값을 자신의 값과 합산 — 이 과정을 반복하며 누적 합을 계속 다음 이웃으로 전달해 나가면, 결국 모든 노드가 전체 gradient의 합에 도달한다. 다만 이 기본 형태도 여전히 큰 통신 부담을 요구한다.
+  - 실무에서 쓰이는 **효율적인 버전의 ring all-reduce**(세부는 강의 범위 밖으로 명시)는 gradient를 **여러 청크(chunk, 예: A, B, C, D)로 쪼갠 뒤**, 각 시간 단계마다 서로 다른 GPU가 서로 다른 청크를 전담해 링을 따라 전달한다(예: GPU0은 청크 A를 다음 워커에 전송, GPU2는 청크 B를 전송하는 식) — 이 과정을 거치면 서로 다른 위치에서 각 청크의 취합 결과를 얻게 되고, 그 취합된 청크들을 서로 공유해서 전체 취합 결과를 완성한다. 실무에서 매우 잘 알려진, 비교적 단순한 알고리즘이라고 언급됨.
+- **Recursive Halving All-Reduce**: 또 다른 접근법 — 예를 들어 8개의 노드가 처음엔 offset 1만큼 떨어진 이웃과 gradient를 교환하고, 다음엔 그 결과를 offset을 늘려가며(반씩 접어나가는 방식으로) 다시 교환 — 이를 반복하면 결국 모든 노드가 8개 gradient의 합/평균에 도달한다. 이 방식은 naive한 전체 브로드캐스트 대비 **병목을 줄이고, 평균 gradient를 얻는 데 필요한 통신 단계 수도 줄여준다.**
+- 이 외에도 parameter server 없이 모든 워커에서 gradient의 합/평균을 얻어내려는 다양한 알고리즘이 존재하며, **어떤 알고리즘을 쓰든 결과적으로 모든 워커가 동일한 취합된 gradient에 도달한다**는 목표는 같다.
+- **수업 중 학생 질문**: "겹치는(overlapping) 부분들이 있는 것 같은데, 그 중복되는 부분을 제거할 수 있나요?" (예: 한 노드가 받는 값이 이미 다른 경로로 받은 값과 겹치는 경우를 지적) A: **그렇게 할 수 있다** — 강의에서 보여준 것은 단순화된 버전이라 이런 중복이 있을 수 있지만, **실제로 쓰이는 ring all-reduce는 이런 중복을 제거한, 조금 다른(더 효율적인) 버전**이다.
+
+### 54. Update after AllReduce — All-Reduce 이후의 모델 업데이트, 그리고 Optimizer State의 거취 (p.66–69)
+
+- (어떤 방식이든) all-reduce를 통해 모든 워커가 gradient의 합/평균 $g = \frac{1}{N}\sum_i g_i$를 얻고 나면, 그 다음은 원하는 optimizer(SGD, SGD momentum, Adam 등)로 **각자 로컬에서** 모델을 업데이트하면 된다. 모든 워커가 **동일한 gradient**로 업데이트하므로, 업데이트 후에도 모든 노드는 **정확히 같은 모델**을 갖게 되고, 다음 iteration도 이 동일한 모델을 기반으로 다시 시작한다 — parameter server 없이, 이웃 노드 간의 통신(all-reduce)만으로 이 동기화가 유지된다.
+- **핵심 차이 — momentum/optimizer state를 어디에 둘 것인가**: parameter server가 있었을 때는(§46–47) momentum이나 $v_t$ 같은 optimizer state를 서버에만 두면 됐다. 하지만 **parameter server가 아예 없는 fully decentralized 세팅에서는 다른 선택지가 없다** — **각 워커 노드가 자신의 momentum과 $v_t$를 로컬에 유지**해야 한다.
+- **결과**: fully decentralized 세팅에서는 워커당 parameter memory가 다시 커진다 — gradient뿐 아니라 momentum, (Adam이면) 학습률을 조절하는 파라미터($v_t$)까지 전부 로컬에 보관해야 하므로, parameter server가 있는 경우(§48의 $2m$)보다 메모리 부담이 크다. **이것이 parameter server 유무에 따른 핵심적인 memory 트레이드오프**다 — server가 없으면 통신 병목은 줄어들지만, optimizer state를 오프로드할 곳이 없어 워커당 메모리는 다시 늘어난다.
+
+### 55. 마지막 질문: Fully Decentralized 세팅에서도 Parameter Memory를 줄일 수 있는가? — ZeRO-DP 도입 (p.70)
+
+- 이번 데이터 병렬화 강의 전체의 **마지막 질문**: parameter server가 없는 fully decentralized 세팅에서도 parameter memory를 줄일 방법이 있는가?
+- 강의 초반(Day 5 §33)에 data parallelism의 중요성을 보여주기 위해 인용했던 **DeepSeek-V3 기술 보고서** 슬라이드를 다시 가져와, 그 그림에 **"ZeRO-1"**이라는 용어가 등장했었다는 것을 상기시킴 — 당시엔 몰랐던 용어지만, 이것이 바로 지금 다루는 질문(optimizer 메모리를 어떻게 줄일 것인가)에 대한 답이라는 것.
+- **ZeRO (Zero Redundancy Optimizer) DP**: Microsoft에서 2019~2020년경 발표한 논문 *"ZeRO: Memory Optimizations Toward Training Trillion Parameter Models"* (arXiv:1910.02054)에서 제안. **핵심 아이디어**: 서로 다른 워커들 사이에 존재하는 모델 상태(모델 파라미터·gradient·optimizer state)의 **중복 사본을 제거**한다 — optimizer state, gradient, 그리고 (필요하면) 모델 파라미터까지, data-parallel 워커들 사이에 **점진적으로(progressively) 분할(partition)**해 나간다.
+- 원래(fully decentralized) DP에서는 각 GPU가 **전체 모델·전체 gradient·전체 optimizer state**를 그대로 다 들고 있어야 한다(=중복이 최대). ZeRO는 이를 세 단계로 나눈다: **ZeRO-1**(optimizer state만 분할), **ZeRO-2**(optimizer state + gradient 분할), **ZeRO-3**(optimizer state + gradient + model parameter까지 분할). 왜 이렇게 하는가 — 메모리를 줄이고 학습을 더 효율적으로 만들기 위해서다.
+
+### 56. ZeRO-1 DP — Optimizer State만 분할 (p.71)
+
+4개 GPU, gradient를 4개 청크 A/B/C/D로 flatten하는 예시로 메커니즘을 설명:
+
+1. **각 워커가 로컬 데이터셋으로 gradient를 계산**한다 — 서로 다른 로컬 미니배치를 쓰므로 값이 다르다: GPU0은 $[a_0,b_0,c_0,d_0]$, GPU1은 $[a_1,b_1,c_1,d_1]$, … 이 단계는 원래 DP와 개념적으로 완전히 동일.
+2. **Gradient synchronization**: (ring all-reduce 등 어떤 방식으로든) 모든 GPU가 **전체 평균 gradient**를 얻는다 — $\left[\frac{a_0+a_1+a_2+a_3}{4}, \frac{b_0+b_1+b_2+b_3}{4}, \frac{c_0+\cdots}{4}, \frac{d_0+\cdots}{4}\right]$ 전체를 모든 GPU가 동일하게 보유. 이 단계도 원래 DP와 다르지 않다 — 모든 워커가 정확히 동일한 gradient를 받는다는 점에서.
+3. **여기서부터 원래 DP와 갈라진다**: 각 GPU는 자신이 담당하는 파라미터 조각에 해당하는 **optimizer state(예: Adam moments)만** 저장한다 — 즉 GPU0은 A 조각의 optimizer state만, GPU1은 B 조각의 optimizer state만 갖는 식. 그래서 GPU0은 오직 A만 업데이트해서 $A'$을 얻고, GPU1은 오직 B만 업데이트해서 $B'$을 얻는다(그 외 GPU도 마찬가지).
+4. **목표는 모든 GPU가 완전한 최신 모델을 갖는 것** — GPU0에서는 A만, GPU1에서는 B만 업데이트됐으므로, 모든 데이터 샘플을 반영하는 하나의 모델을 만들려면 $A', B', C', D'$을 서로 공유해야 한다. 이 공유가 끝나면 모든 GPU가 동일한 최종 모델을 갖게 되고, 그 결과는 **원래 DP와 정확히 같다.**
+- **장점**: 만족스러운 성능은 그대로 유지하면서, **optimizer state를 저장하는 메모리만 절약**한다.
+- **비용**: optimizer 업데이트 후 최종 모델($A'\!\sim\!D'$)을 다시 조립하기 위한 **추가적인 파라미터 통신**이 필요하다 — 이는 원래 DP에는 없던 통신이다(원래 DP는 gradient 동기화 이후 각 GPU가 곧바로 전체 모델을 업데이트하면 끝이라, 파라미터를 별도로 다시 공유할 필요가 없다).
+
+### 57. ZeRO-2 DP — Optimizer State + Gradient까지 분할 (p.72)
+
+- 1단계(로컬 gradient 계산)는 ZeRO-1과 동일: GPU0은 $[a_0,b_0,c_0,d_0]$, GPU1은 $[a_1,b_1,c_1,d_1]$, …
+- **차이는 gradient synchronization 단계**: ZeRO-1처럼 전체 평균 gradient를 모든 GPU에 다 뿌리는 대신, **각 GPU는 자신이 담당하는 파라미터 조각에 해당하는 gradient 조각만** 받는다 — 예를 들어 GPU0은 $\frac{a_0+a_1+a_2+a_3}{4}$(A에 대한 평균)만, GPU1은 $\frac{b_0+b_1+b_2+b_3}{4}$(B에 대한 평균)만 받는다. 즉 이 통신 단계에서부터 이미 **전송량이 줄어든다**(전체 gradient를 모두에게 전파하지 않으므로).
+- 이후 업데이트 단계는 ZeRO-1과 동일: 각 GPU가 자기 조각의 optimizer state로 자기 조각만 업데이트해 $A', B', C', D'$을 얻는다.
+- 목표도 동일 — 모든 파라미터를 최신 상태로 만들기 위해 $A', B', C', D'$을 서로 공유해서 모든 GPU가 같은 최종 모델을 갖게 한다.
+- **정리**: ZeRO-2는 ZeRO-1보다 gradient 통신량 자체도 줄이면서(전체가 아니라 자기 담당 조각만 받으므로), GPU당 저장해야 하는 데이터도 optimizer state에 더해 **gradient까지** 줄어든다.
+
+### 58. ZeRO-3 DP — Optimizer State + Gradient + Model Parameter까지 분할 (p.73)
+
+- 왜 모델 파라미터까지 나누는지는 (앞의 두 단계에 비해) 다소 덜 직관적이라고 언급됨 — 통신 관점에서는 오히려 **비효율적인** 알고리즘이라는 특징이 있다.
+- **메커니즘**: 각 워커는 이제 **모델 파라미터의 일부 조각만** 저장한다. 문제는, forward/backward propagation을 하려면 전체 모델이 필요한데 일부 조각만 갖고 있으면 어떻게 계산하느냐는 것 — 답은 **필요한 시점(on-demand)에 나머지 파라미터를 워커들 간에 일시적으로 gather**해서 쓰는 것이다. 이는 통신 측면에서 매우 비효율적이다(연산할 때마다 자주 통신이 필요하기 때문).
+- Gradient synchronization과 업데이트 단계는 ZeRO-2와 동일(각 GPU가 자기 담당 조각만 업데이트).
+- **결정적 장점**: ZeRO-1·ZeRO-2와 달리, 업데이트 후 전체 모델을 **영구적으로(permanently) 재구성할 필요가 없다** — 애초에 그 누구도 전체 모델을 지속적으로 복제해서 갖고 있지 않으므로, 필요할 때만 모아서 쓰고 다시 흩어놓으면 된다.
+- **ZeRO-1/2 대 ZeRO-3의 통신 패턴 차이**: ZeRO-1·ZeRO-2에서는 파라미터 통신이 주로 **optimizer 업데이트 이후**, 전체 모델을 재구성하기 위해 일어난다. ZeRO-3에서는 파라미터 통신이 **forward/backward 도중, 필요할 때마다(on-demand)** 일어난다 — 전체 모델이 어디에도 영속적으로 복제되어 있지 않기 때문이다.
+
+### 59. ZeRO 4버전 비교표 및 DeepSeek-V3의 실제 선택 (p.74)
+
+| | Original DP | ZeRO-1 | ZeRO-2 | ZeRO-3 |
+|---|---|---|---|---|
+| Parameters | Replicated | Replicated | Replicated | **Partitioned** |
+| Gradients | Replicated | Replicated | **Partitioned** | Partitioned |
+| Optimizer states | Replicated | **Partitioned** | Partitioned | Partitioned |
+
+- 표에서 보듯 ZeRO-1 → ZeRO-2 → ZeRO-3로 갈수록 더 많은 상태가 분할(partition)되어 GPU당 메모리는 더 줄지만, 그만큼 파라미터를 다시 모으기 위한 통신(특히 ZeRO-3의 on-demand gather)이 늘어나는 **메모리-통신 트레이드오프**가 명확해진다.
+- Day 5 §33에서 처음 인용됐던 DeepSeek-V3 기술 보고서 슬라이드를 다시 보면, DeepSeek-V3가 실제로 채택한 것은 **ZeRO-1** — optimizer state만 분할하고, gradient와 전체 모델 파라미터는 GPU당 그대로(replicated) 유지하는 방식이었다.
+
+### 60. Conclusion — Data Parallelism 챕터 총정리, 그리고 남은 한계 (p.75–77)
+
+- **핵심 아이디어**: 데이터셋을 여러 로컬 노드로 분할하는 것.
+- **성능**: centralized training과 (통계적으로) 동일한 성능을 달성한다 — full-batch gradient descent에서는 엄밀하게 동일, mini-batch gradient descent에서는 통계적으로 동일(§42–43).
+- **Memory**: 목표 미니배치 크기가 고정되어 있다면 **activation memory**를 확실히 줄여준다. **Parameter memory**는 optimizer에 따라 다르다 — SGD는 줄지 않지만, momentum·Adam처럼 optimizer state가 있는 경우 parameter server(또는 ZeRO 계열 기법)를 통해 줄어들 수 있다(§44, §48, §55–58).
+- **Delay**: 통신 지연 대비 연산 비중에 따라 학습 시간을 줄일 수도, 못 줄일 수도 있는 조건부 이점이다 — 병렬 연산 덕분에 시간 단계당 훨씬 많은 데이터를 처리할 수 있다는 것은 확실하다(§45).
+- 다른 optimizer(SGD momentum, Adam 등)로 확장 가능하며(§46–47), parameter server가 없는 **fully decentralized 설정**에서도 all-reduce 계열 알고리즘으로 동일하게 구현 가능하다(§52–54), 그리고 그 안에서도 ZeRO-DP로 메모리를 추가로 절약할 수 있다(§55–59).
+- **남은 한계**: 슬라이드에 "data parallelism이 대규모 데이터셋을 다루는 데는 좋은 해법이지만, 여전히 문제를 일으킬 수 있다"는 문구가 등장하는데, 강의에서는 이 문장을 도중에 넘기고 곧바로 다음 예고로 이어갔다 — 그 한계의 정체는 바로 §60의 마지막 발언에서 드러난다: **data parallelism은 기본적으로 전체 모델을 모든 GPU에 그대로 복제(replicate)하는 방식**이므로, **모델 자체가 매우 클 경우**에는 parameter memory 문제뿐 아니라(activation memory 역시 모델 크기에 의존하므로) activation memory 문제까지 여전히 그대로 남는다 — data parallelism 단독으로는 **대규모 모델(large-scale model)** 문제를 해결하지 못한다.
+- **다음 주 예고**: 모델을 의도적으로 여러 GPU에 나누어 분할하는 **model parallelism** 전략들을 다룬다.
+- 강의는 질문이 있으면 물어보라는 말과 함께 마무리됐다. *(오디오 마지막 문장은 "혹시 제가 체크하지 못했다면…" 형태로 도중에 끊겨 불명확 — 추측하지 않고 여기까지만 기록.)*

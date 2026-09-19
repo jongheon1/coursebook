@@ -415,3 +415,111 @@ This section is the professor's brief recap of a student presentation on a paper
 - **The same priorities applied non-preemptively**: once a task starts, it runs to completion — in this case (checked over the 0–15 window), the resulting schedule looks fine.
 - **The professor's closing, unresolved question (deferred to next time)**: "does this non-preemptive schedule stay fine forever, not just over the 0–15 window we observed?" — this question was not answered in this session. **He noted there were many follow-up questions but no time left, and said the remaining slides would continue after Thursday, then ended class.**
 - (The session closes noting this topic will be covered in more depth the following Tuesday.)
+
+## 20. [Day 5] Does the non-preemptive schedule stay valid "forever"? — the synchronization-point argument and the need for formal proof (⚠️ no slide deck this session — recorded from the lecture audio only; continues Day 4)
+
+> Source: 2026-09-17 lecture recording (fifth session; recap project result document `2026-09-17-real-time-systems-1.json`, titled "Periodic Task Scheduling: Deadlines & Feasibility Analysis," roughly 32 minutes total). A Thursday class, picking up — exactly as the professor promised at the end of section 19 — the unresolved question from last time (Day 4, 09-15): "does the non-preemptive schedule stay valid forever, beyond the 0–15 window we observed?" **The entire session ran without a slide deck, as board work and oral Q&A, so — following the same principle as sections 13, 16, and 18 — it is recorded from the audio alone with no slide correspondence.** The board diagrams themselves aren't captured in the audio, so passages that depend heavily on a diagram are flagged as such below.
+
+- **Opening — confirming the premise that "we can't observe this directly at the kernel level"**: the professor asked whether anyone had an opposing claim to the statement "at the kernel level, we can't actually observe the exact deadline estimate," and no one objected. In other words, watching the runtime forever to empirically confirm "no problem, ever" isn't actually possible — this appears to be groundwork for the conclusion (20.3 below) that a formal proof is needed.
+- **Extending the question — from release 0 to release 1**: the non-preemptive schedule example from last time only covered **synchronous release** — i.e., every task's first release happening together at time 0 (**release 0**). The professor raised a new question: if the jobs' first release were shifted by one unit instead (**release 1**), does the existing result ("no deadline is missed under synchronous release") still hold?
+
+### 20.1 The synchronization-point argument
+
+- **Core idea (professor's claim)**: the release-1 case is covered by the same method — given enough time, the system eventually converges back to a synchronous-release state (re-synchronizes) within a bounded number of steps. That is, there will "eventually" be a moment when all tasks are alive and aligned together again (a **synchronization moment** — the professor himself said "I don't know the exact term" and used this as a placeholder), and from that point on it's identical to the original (release-0) synchronous case.
+- **Student pushback / attempt to pin it down**: when a student asked whether that moment is "not necessarily right here (within the observed window)," the professor agreed — "of course not; 'eventually' doesn't necessarily mean right here" — and clarified that as long as that moment arrives within *some* bounded time (however large, "even an enormous number of hours"), the argument holds. A student proposed a concrete instance — "suppose, for example, resynchronization happens at time 9.9" — and the professor agreed the same argument still applies.
+- **Where the argument lands**: both sides agreed the problem reduces to whether such a synchronization moment exists / can be found. The professor confirmed: "if we can actually observe/find such a moment, that's enough."
+
+### 20.2 "Intuition alone isn't enough" — the need for a formal proof
+
+- The professor stressed that, plausible as the synchronization-point argument sounds, **intuition alone can't prove whether it's actually true, or whether some tricky edge case is hiding in the general case.** His conclusion: "we need a way to prove it formally — we should prove it through the algorithm itself."
+
+### 20.3 Case enumeration — release offsets modulo the periods
+
+- **Approach**: he framed the proof as reducing to checking every combination of "release offset modulo each task's period." For the two periods in last time's example (**5 and 7**), he verbally referenced two groups of remainders — "0,1,2,3" and "0,1,2,3,4" — and said simulating all combinations of these yields **"about 14" distinct synchronized cases**, and that checking all of them (given time) confirms the claim.
+  - ⚠️ **Unclear point**: the residue sets for periods 5 and 7 should in principle be {0,1,2,3,4} (5 values) and {0,1,2,3,4,5,6} (7 values), which doesn't line up cleanly with the "0,1,2,3" (4 values) and "0,1,2,3,4" (5 values) groupings the professor stated aloud, nor with the "about 14" total. Without seeing the board, the exact correspondence can't be reconstructed from audio alone — **this records the professor's statement as given, without resolving the arithmetic.**
+- **Conclusion**: the session confirmed only that this exhaustive case-enumeration approach is, in principle, the right way to prove the "does it hold forever" claim — the actual case-by-case verification wasn't carried out in class.
+
+### 20.4 Q&A #1 — does reducing execution time always help schedulability?
+
+- **Question**: for a schedulable task set, if some jobs' execution times only decrease (never increase), is schedulability still guaranteed?
+- **Preemptive case — trivial**: assuming no context-switch overhead, reducing execution time is always favorable for schedulability — confirmed as "truly trivial."
+- **Non-preemptive case — a counterexample exists**: the professor said, "if the answer is 'yes, it's trivial,' I'd say no, it isn't," stressing there's a trap in the non-preemptive case, and worked through a board counterexample.
+  - Counterexample sketch (**⚠️ this example leans heavily on a board diagram, and the exact timing/positions of each task can't be fully reconstructed from audio alone** — the flow below follows the professor's spoken narration as closely as possible): with the lower-priority **task 2** running, the higher-priority **task 1** — which should be running at that point — can't preempt it (non-preemptive), so it becomes "at risk." Now suppose **task 3**'s execution finishes earlier than expected (i.e., its execution time is reduced): at that point task 1 still doesn't get to run and is pushed even later, task 3 in turn becomes the one at risk, and ultimately task 1 misses its deadline (right at that point).
+  - **Conclusion**: "reducing execution time can actually end up violating other tasks' timing." A question that looks trivial at first glance turns out to depend on the system, the load, and the schedule.
+
+### 20.5 Q&A #2 — what happens with more tasks? LCM blow-up and the need for formal verification tools
+
+- **Question (professor-led)**: the current example has only 3 tasks, so checking the **least common multiple (LCM)** of periods 5 and 7 was enough. What if there were 300 tasks — or even just 10? The LCM of the periods can become enormous — even processing one unit of it per nanosecond could take on the order of **100 years**.
+- **Key conclusion**: exhaustively checking every case by hand or by simulation therefore becomes practically impossible at scale. What's actually needed is a **tool that formally determines schedulability**, not manual scheduling or brute-force simulation. The professor explicitly framed this as central to the course: **"I think more than half the content of this entire course is really about this."**
+
+### 20.6 A side discussion — making the single-processor assumption explicit
+
+- A student pointed out that the green elements in the diagram represent processes, and asked (in effect) whether a separate process is needed to schedule other instances. The professor used this to make explicit that the course had, up to now, implicitly assumed a **single, fixed target architecture**.
+- **A more general formulation**: the earlier statement — "a schedule is produced by a given task set and a given scheduling algorithm" — should really include **"under a given target architecture"** too, since execution-time numbers themselves depend on processor speed (the architecture). Multiple processors were flagged as "a big [problem/topic]" but not pursued further — the professor explicitly stated **this course only covers single (uniprocessor) systems**, since "that alone is already more than enough."
+
+## 21. [Day 5] Utilization-based feasibility analysis — a necessary condition, the concept of an "optimal" scheduler, and Rate Monotonic's bound
+
+> Continuing directly from section 20.5's conclusion that a formal tool is needed — this introduces **utilization** as the first building block of that formal tool.
+
+### 21.1 A new example task set and the "physical meaning" question
+
+- A new task set on the board: **C=4, T=5**; **C=1, T=7**; **C=2, T=3** (C = worst-case execution time (WCET), T = period). The professor recited the numbers aloud in the order "4, 1, 5, 2, 7, 3" — the exact correspondence between that spoken order and the board layout can't be pinned down from audio alone.
+- **Question**: what is the **physical meaning** of each of these six numbers?
+- **Answer — utilization**: the key is each task's $C/T$ ratio. Over a very long time span, that task must consume that fraction of the total computing capacity. (The professor illustrated the idea with "say, 25%" — this appears to be a **generic illustrative figure** rather than the exact value for the board's $C=4, T=5$ pair (which would be 0.8) — whether the two are meant to be the same number isn't confirmable from the transcript.)
+
+### 21.2 The meaning of the utilization sum (ΣU) and the necessary condition ΣU > 1 ⟹ infeasible
+
+- **Meaning of ΣU**: summing every task's utilization gives the fraction of total computing capacity that gets used.
+- **Why ΣU > 1 is a problem (necessary condition)**: the professor illustrated with a **generic example**: "over a very long span — say 1,000 time units — you'd actually need 1,100 units of processing, but you only have 1,000: you're short by 100." (This "1,000 / 1,100" figure doesn't arithmetically match the actual ΣU of the concrete task set from 21.1 — it appears to be a separate illustrative number used purely to convey the concept.)
+- **Conclusion (necessary condition)**: if ΣU is greater than 1, **no scheduling algorithm, no schedule design whatsoever, can meet all the deadlines** — "you simply have to give up on that task set." This is useful precisely because it's a **general mechanism** that holds regardless of the actual data: it tells you a task set is infeasible (or how hard it is) without needing to commit to any particular scheduler.
+
+### 21.3 The concept of an "optimal" scheduler and the sufficient condition ΣU ≤ 1
+
+- **Definition (professor's)**: scheduler A is "optimal" if, whenever *any* other scheduler B can successfully schedule a given task set, **A must also be able to schedule it.** Optimality here means "if anyone else can do it, I can too."
+- **Claimed result**: if a scheduler is optimal in this sense, then **as long as ΣU ≤ 1**, it can make the task set schedulable with no special tricks needed. Since "if ΣU > 1, no scheduler on earth can handle it," such a scheduler handles every case except the ones nobody could possibly handle — that, the professor explained, is what "ultimate" means here.
+  - ⚠️ No specific algorithm was named in this session for "the optimal scheduler that always achieves ΣU ≤ 1" — the professor only said, "we'll be learning these optimal algorithms."
+
+### 21.4 Rate Monotonic (RM)'s utilization bound — about 69%
+
+- As a concrete contrast to the idealized "optimal" scheduler above, **Rate Monotonic (RM)** scheduling was mentioned for the first time. The professor first said "RM's bound is around 0.7," then immediately refined it: **"the general bound for RM is known to be about 0.69."**
+- **Meaning**: a **sufficient condition** — "if you schedule a given task set with RM, then as long as that task set's utilization is under 69%, you can produce a valid schedule." This is presented as a simplified, practical check derived from (a stronger, simplified version of) the necessary condition in 21.2.
+- **Derivation deferred**: the professor explicitly deferred the derivation of this 69% figure to **"a later lecture (homework)"** and told students to accept the result for now.
+- ⚠️ **Note-taker's annotation (background not stated in lecture)**: this "about 69% (≈ ln 2)" figure matches the textbook-famous **Liu & Layland RM utilization bound** (the asymptotic value $\ln 2 \approx 0.693$ as the number of tasks $n \to \infty$; the exact formula for finite $n$ is $n(2^{1/n}-1)$). However, the professor never stated the $n$-dependent formula in this session — he presented **only the approximate "about 69%" figure** as a given result and deferred the derivation. It cannot be determined from this session alone whether he intends the asymptotic bound specifically, or some other framing.
+- **Connecting back to the original problem**: accepting this formal schedulability condition (RM, 69%) leads back to the original sensor-period problem (section 22) — given that other tasks also need sufficient time, **the utilization bound determines a lower bound on that period.** (A larger period lowers utilization, which is favorable; shrinking the period eventually crosses the 69% bound, and that crossing point is the period's lower bound.) The professor noted this "minimum" direction of the analysis is comparatively harder, and that the "maximum" direction is more straightforward — setting up the case study in section 22.
+
+## 22. [Day 5] Case study — designing a train obstacle-sensor's period (upper bound: physics; lower bound: utilization)
+
+- **Setup story**: a practical example the professor said he really likes, about a train from 20–30 years ago. The train has a **sensor** that can detect whether there's an obstacle, but its **detection range is limited to 100 meters** (an illustrative value — it depends on the specific sensor).
+- **Goal**: stop the train without hitting an obstacle. The problem is choosing the **right period** at which to operate the sensor.
+
+### 22.1 Too long a period — the need for a physical upper bound
+
+- Extreme case: operate the sensor only **once an hour**. Say it checks at 12:00, then again at 4:00 — if an obstacle appears in between, at **3:30**, it goes undetected and the train hits it.
+- → too long a period risks failing to detect the obstacle in time — **the period needs an upper bound.**
+
+### 22.2 Too short a period — the need for a lower bound from utilization / shared resources
+
+- The other extreme: operate the sensor **every second**. That's excellent purely for obstacle detection (the opposite extreme from once an hour) and, taken alone, doesn't look like a problem (just inefficient). But once you account for **the processor being shared with other tasks**, a problem appears: with only one processor (a single computing unit), if this sensing task monopolizes it, other tasks can't run at all. If other sensing-related tasks also have short periods, this task's period being too short relative to the platform's capacity ends up violating other tasks' timing.
+- → the **utilization** constraint from section 21.4 (the ≈69% RM bound, or the ΣU ≤ 1 necessary condition) is exactly this direction's constraint, and it's what sets the period's **lower bound**.
+- The professor noted this example relates to **something like Rate Monotonic**, deferring the details of RM itself and asking students, for now, to just grasp the big picture: "too large a period → missed detection; too small → platform overload."
+
+### 22.3 The physics-based upper-bound (max) calculation — the worst-case scenario
+
+- The professor said the upper-bound direction is **more straightforward** than the lower-bound (utilization) direction. Reason: at every period the sensor checks, and here is how the **worst case** is constructed —
+  1. At the **exact moment** the sensor checks, suppose an obstacle genuinely exists but is just **beyond** 100 meters — since the sensor can only see up to 100 meters, it reports "no obstacle" (not yet detectable).
+  2. Only at the **next period** does the sensor check again — by then the train has moved closer and the obstacle now falls within range (e.g., between 90 and 100 meters), so it's finally detected. In the worst case, then, **detection is delayed by exactly one period.**
+  3. Detection immediately triggers an alarm, and the **conductor applies the brake**, but the conductor's **reaction time has an upper bound** (assumed, e.g., 1 second).
+  4. Once the brake actually engages, the **braking process** reduces speed over time, and the train travels further during that process.
+- **Required condition**: the total distance covered by (1) the one-period detection delay, (3) the reaction-time delay, and (4) the braking distance must sum to **less than 100 meters** to avoid a collision.
+- **Braking-distance calculation**: on a velocity-vs-time graph, the distance covered during deceleration is the **area** under the curve (velocity × time, forming a triangle) — high-school-level physics (the professor joked, "Korean students should be able to calculate this," adding he himself "graduated 30 years ago and doesn't quite remember"). As that triangle grows (i.e., as deceleration takes longer), the distance traveled grows too, and eventually exceeds the 100-meter limit — that crossing point is exactly what determines the period's **upper bound**.
+- **Result (qualitative)**: the calculation should leave roughly **9–10 meters** of margin to stop in time (the exact upper-bound period value itself depends on the board arithmetic and wasn't pinned down to a final number in this session — the qualitative conclusion given was: "one hour isn't enough, 30 minutes isn't enough, 30 seconds still isn't enough — at some point there's a specific value that works").
+
+### 22.4 Putting it together — choosing a period between the two bounds, and a preview of next time
+
+- Both directions must be weighed together: **too long a period (violating the upper bound) means physically failing to avoid the obstacle; too short (violating the lower bound) means violating other tasks' timing.** The professor called this "a really good, important example" and said he'll **revisit it next class.**
+
+### 22.5 Q&A — could it ever be optimal to deliberately hit the boundary value?
+
+- **Student question**: given that performance at the exact minimum/maximum period boundary isn't necessarily ideal, is there a practical case where it would actually be optimal to deliberately slow the system down or adjust the period to land exactly on that boundary (e.g., the minimum-max point), rather than leaving it as it naturally falls?
+- **Professor's answer**: it depends on the system. **In this simplified (toy) example**, performance outcomes are the same regardless of where the period is set within the valid range, so there's no such effect here. However, in a **control-system** context, reducing the period actually can improve controller performance — due to other factors not covered in this lecture. He was explicit that this toy example itself has no such effect.
+- With no further questions, the session ended with **"see you next week"** (the final session of the week-2 lecture notes).

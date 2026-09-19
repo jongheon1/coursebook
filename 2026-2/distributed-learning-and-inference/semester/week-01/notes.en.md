@@ -398,3 +398,197 @@ Suppose the full dataset $D$ is split into as many pieces as there are worker no
 - As a reference point, the instructor pulls up centralized training's process from **page 26** of the "Deep Learning Basics" lecture note: $W_0$ is randomly initialized, then trained over multiple epochs/iterations — **each iteration computes the gradient using the entire dataset $D$** and updates the model, repeated across iterations ($T$ = iteration index). This assumes **full-batch gradient descent**, so the notation does not include $N$ (the number of workers).
 - On the data-parallelism side, an **additional process** is layered on top of this, introducing a new parameter **$N$ (the number of worker nodes)**: because every worker node received the **same model** from the parameter server, an additional step is introduced where **all workers compute their gradients in parallel** — this is as far as the instructor got.
 - **Time ran out here (t=2772, 11:00)**: the instructor explicitly said "starting from this slide, I'll talk about this on Friday" and ended class. In other words, **the actual comparison with centralized training (the proof/explanation of whether the two converge to the same result) was not completed this session and was explicitly deferred to the next class (Friday).** Likewise, the remaining outline items from §34 — memory/delay analysis, extension to other optimizers, and the fully decentralized setting — were all left for after Friday.
+
+---
+
+## Day 6 (2026-09-18) — Finishing Data Parallelism: Momentum/Adam Integration, Fully Decentralized AllReduce, ZeRO-DP
+
+> Source: lecture-audio STT from 2026-09-18 (Fri) + slides. **The slide deck was revised before this session**: the deck used in Day 5, "Week 3 Data Parallelism.pdf" (49 pages, whose pages 47–49 ended abruptly and prematurely with "Conclusion / Thank you"), was replaced by a **"full version" (77 pages total)** in which pages 1–46 are identical but page 47 onward is substantially expanded and restructured — adding Integration with Momentum, Integration with Adam, Revisiting Parameter Memory, fully-decentralized AllReduce-based data parallelism (no central server), ZeRO-DP, and a real Conclusion. **All page numbers below refer to this new 77-page version** (the slot that used to be the old deck's pages 47–49 is now relocated and expanded starting at page 47 in the new version). Everything Day 5 deferred at t=2772 ("starting from this slide, I'll talk about it on Friday") — (1) actually finishing the comparison with centralized training (item 2 of §34's outline), (2) the memory/delay analysis (item 3), (3) extension to other optimizers (item 4), (4) the fully decentralized setting (item 5) — is covered in this session (t=0–6099), which then continues on to ZeRO-DP and a genuine Conclusion.
+
+### 41. Recap and Restating Today's Open Questions
+
+- Class opens by restating last session's (Day 5) data-parallelism algorithm: split the dataset into non-overlapping chunks and assign one to each node (their union equals the full dataset) → once training starts, every worker downloads the current model from the parameter server → each worker computes a gradient locally, **using only its allocated data** → these gradients are transmitted to the parameter server → the server **aggregates** them and updates the model → the new model is transmitted back to every node → repeat until satisfactory performance.
+- Restates the open questions from last time: (1) does this really achieve the same performance as centralized training? (2) what about memory and delay? (3) what's the actual advantage? (4) can this be integrated with other optimizers like SGD with momentum or Adam? (5) is a parameter server always needed — since the parameter server itself can become a severe communication bottleneck (receiving gradients, retransmitting the model)?
+- Announces today will work through these in order, starting again with the comparison to centralized training (the full-batch gradient descent case).
+
+### 42. Comparison with Centralized Training — Completing the Equivalence Proof for Full-Batch Gradient Descent (p.29–32)
+
+- **Setup recap**: centralized training randomly initializes $W_0$ and then, every iteration, computes the gradient using the entire dataset $D$ and updates the model (lecture notes [Week 1, 2], page 26). Data parallelism adds the assignment of $D_i$ to worker $i$, with $\bigcup_i D_i = D$ and no overlap between shards — the same setup as in Day 5.
+- **The key question**: to check whether the two processes are equivalent, it suffices to check whether **the change used to update the model at each iteration (i.e., the gradient) is the same in both cases** — if it is, and $W_0$ is the same, performance is exactly identical; if not, performance can diverge.
+- **The proof**: the aggregated gradient at the parameter server is
+  $$G_t^{DP} = \frac{1}{N}\sum_{i=1}^{N} G_t^i$$
+  where $G_t^i$ is the average gradient over worker $i$'s allocated data $D_i$ — by the ordinary definition of a gradient,
+  $$G_t^i = \frac{1}{|D_i|}\sum_{x \in D_i} \nabla L(x; W_t)$$
+  Assuming **every worker has the same number of samples**, $|D_i| = |D|/N$, so substituting this in cancels the $N$ terms:
+  $$G_t^{DP} = \frac{1}{|D|}\sum_{x \in D} \nabla L(x; W_t) = G_t^{centralized}$$
+  i.e., **summing the per-worker gradients back over all workers is exactly the same as summing the gradient over the entire dataset.**
+- **Conclusion**: full-batch gradient descent has **no randomness at all** in the training process (no mini-batch is sampled — all the data is used every time), so assuming both algorithms start from exactly the same $W_0$, they lead to **exactly the same performance.**
+- **When sample counts differ across workers**: instead of a plain average, use a **weighted sum** — e.g., if worker 1 has more data than worker 2, give it a proportionally larger weight to preserve equivalence. In practice, if machines have comparable compute capability, the dataset is simply split evenly; a weighted average handles any slight imbalance.
+- **A follow-up question the instructor posed himself — "what if each worker directly does a gradient-descent step and transmits the updated model to the server instead?"**: so far, workers only computed gradients and sent them to the server, which performed the actual update step. What if, instead, **each worker performs one local gradient-descent step itself** and transmits the **updated model** to the server? Simple algebra confirms this leads to **exactly the same result** — averaging the updated models obtained on each worker is mathematically identical to updating the model with the averaged gradient (on the server). This was included to answer "why bother transmitting the gradient and having the server update — can't the worker update instead?" — **yes, updating on the worker side gives the same result.** (Resource-usage differences between the two are revisited in Q1 of §48.)
+
+### 43. Comparison with Centralized Training — the Mini-Batch Gradient Descent Case (p.33–35)
+
+- **Mini-batch GD recap** (lecture notes [Week 1, 2], page 27): each iteration randomly samples a mini-batch of $B$ data points, computes the gradient, and updates the model; once an epoch (a full pass through the dataset) finishes, the dataset is shuffled and the process repeats. Unlike full-batch, there is now **randomness** in the training process.
+- **What "mini-batch" means in data parallelism**: if the target effective mini-batch size (as in centralized training) is $B$, then each of the $N$ workers only needs $B/N$ samples to compute its gradient — once the server aggregates these $N$ gradients, the result effectively plays the same role as a gradient computed from $B$ samples.
+- **Shuffling procedure**: at the first mini-batch of an epoch, each worker (independently) shuffles its own shard $D_i$ and draws a mini-batch $\tilde{D}_i$. Each worker uses all $B/N$ samples in $\tilde{D}_i$ to compute a gradient and transmits it to the server — the next iteration repeats with the next mini-batch (still $B/N$ samples each), keeping the effective mini-batch size at $B$. *(A slide notation typo was caught and corrected live: what was written as $D_i$ should actually be $\tilde{D}_i$.)*
+- **Follow-up Q&A — "why not just sample B samples at each worker?"**: you could, but the effective mini-batch size would then behave like $3B$ (with 3 workers), not $B$, leading to **completely different performance**. If there's a specific target mini-batch size, the per-worker sample count ($B/N$) needs to match it exactly — the same principle as in centralized training, where changing the mini-batch size can significantly change performance.
+- **Forward pointer to memory**: with a fixed target mini-batch size, the number of samples processed per worker shrinks, and since activation memory is proportional to (the number of samples processed, i.e.) the mini-batch size, this directly translates into reduced activation memory — details in §44.
+- **Revisiting equivalence**: now, because of (1) the randomness of mini-batch sampling itself and (2) the randomness from shuffling independently on each node, the two processes can no longer be called "exactly identical" the way full-batch was. A single iteration alone will obviously give different results — but that's just as true of **centralized training alone**: training the same model five times with SGD yields five different final models due to randomness. The real question is whether they achieve the same performance **statistically**.
+- **Answer: yes, statistically.** Under the assumption that mini-batches are sampled uniformly at random, there is a large body of theoretical work analyzing the **convergence behavior** of distributed vs. centralized training — the details are out of scope. For strongly convex functions, both approaches can be shown to reach the exact **global optimum**; for non-convex optimization, global optimality can't be guaranteed, but the algorithm can be shown to converge to a **stationary point** (where the gradient goes to zero). Bottom line: while not rigorously proven to be identical, the two can be understood as achieving **statistically the same performance.**
+
+### 44. The Real Advantages of Data Parallelism (1) — Revisiting Memory (p.37–42)
+
+- **Motivating question**: everything shown so far is that DP achieves (statistically) the same performance as centralized training while **only adding communication** — so why use it at all? The answer lies in memory and delay.
+- **Parameter memory per GPU (the SGD case)**: reusing the toy example from [Week 2], page 11 (6 layers, model size $m = \theta_1+\cdots+\theta_6$, activation size $\alpha = a_1+\cdots+a_5$), suppose the model size is 10 — under SGD, parameter memory is double that, 20 (one copy for the gradient, one for the model), the same definition already seen in the centralized case.
+- **SGD's parameter memory doesn't shrink under DP either**: every worker node still has to keep **the full model** and run backpropagation on it directly to compute its gradient — so as long as SGD is used, each worker still needs twice the model size in memory. **In other words, for SGD, per-GPU parameter memory is identical between centralized training and data parallelism** — data parallelism gives no advantage here. (Other optimizers like momentum and Adam are different, as §47 reveals — that integration hasn't been covered yet at this point, so the answer is deferred.)
+- **Activation memory per GPU**: activation memory is proportional to the number of samples processed, i.e., the mini-batch size (recapping [Week 2], page 28). In centralized training with target mini-batch $B$, activation memory scales with $B$. In DP, even with the same target $B$, each worker only needs to process $B/N$ samples during the forward pass, so **per-worker activation memory shrinks by a factor of $1/N$.**
+  - However, **the total activation memory summed across all workers does not decrease** — only the **peak** per-GPU activation memory shrinks.
+  - This is particularly useful when only several low-cost machines are available and a single machine can't run training at all — combining them with data parallelism makes training feasible.
+- **Worked example (the instructor's own example, explicitly noted as illustrative numbers only)**: suppose centralized training with a mini-batch size of 500 has some specific parameter/activation memory values. Now distribute training across 10 different GPUs, evenly partitioning the dataset — each worker processes exactly $500/10=50$ samples per iteration, and **per-GPU activation memory drops to 10%.** For example, even with only several low-cost, roughly 12GB-class GPUs and no expensive high-end hardware, this kind of data parallelism with a fixed target mini-batch size **makes training feasible.**
+- **Conclusion**: assuming a fixed target mini-batch size, the activation-memory reduction is an **unambiguous** advantage of data parallelism.
+
+### 45. The Real Advantages of Data Parallelism (2) — Delay Analysis (p.43–46)
+
+- On the delay side, data parallelism carries **both an advantage and a disadvantage.**
+- **Advantage**: a single machine can only offer its own compute capability at any given moment, but now multiple workers compute **simultaneously**, in parallel, increasing the amount of data that can be processed per time step. With a fixed target mini-batch $B$, each worker's share also shrinks to $B/N$, and processing that in parallel across workers **increases throughput** — each worker does less work, and that work happens concurrently.
+- **Disadvantage/uncertainty**: communication now has to be accounted for — (1) each worker uploading its gradient to the parameter server, and (2) the server broadcasting the updated model back to every node. Which one dominates **depends entirely on which machines are used and how they're connected — there's no universal answer.**
+- **The delay formula (as given on the slide)**: delay per training round is approximated as
+  $$\text{Delay} \approx \underbrace{T_{\text{comp}}}_{\propto\, B/N} + \underbrace{T_{\text{grad upload}}}_{\propto\, m} + T_{\text{server-side update}}(\text{waits for all gradients}) + T_{\text{model broadcast}}$$
+  with a communication cost of **$2m$ per GPU** (upload + download, $m$ = model size).
+- **The key conclusion — "we don't know"**: with a fixed mini-batch size $B$, whether data parallelism is actually faster than centralized training **cannot be stated in general.** Per-GPU computation time definitely shrinks by $1/N$ thanks to parallelism, but communication delay exists, and if it dominates, processing $B$ samples could actually take **longer.**
+- **Relationship to model size**: DP is only faster than centralized training when communication delay is relatively small — and in many scenarios involving **large-scale models**, this condition doesn't hold. Gradient size equals model size exactly (assuming all parameters are updated), so larger models mean a larger communication burden. In other words, **targeting the same mini-batch size and comparing to centralized training, data parallelism's speed advantage may not actually materialize.**
+- **The practical fix**: to actually realize data parallelism's advantage, each GPU needs to do a **substantial chunk of computation** — communicate less frequently, process a large number of samples per GPU to maximize GPU utilization, and shrink the fraction of time spent on communication. In practice, large companies exploit this by **processing massive amounts of data on each node** — rather than targeting the same mini-batch, they use multiple GPUs to **increase the effective mini-batch size itself** to maximize the benefit.
+- **Summary**: the memory (specifically activation-memory) advantage is unambiguous, but the delay (speed) advantage is **conditional**, depending on the ratio of computation to communication.
+
+### 46. Extending Data Parallelism to Other Optimizers (1) — Integration with Momentum (p.48–50)
+
+- **Recap of SGD with momentum in centralized training** ([Week 1, 2] notes, pages 31–34): to avoid changing the update direction too abruptly, updates keep the previous momentum alongside the current gradient $g_t$ —
+  $$m_t = \alpha \cdot m_{t-1} + g_t$$
+- **Question**: in data parallelism, where should this momentum buffer $m_t$ live? Does each worker need its own copy, or should it live on the server?
+- **Answer — keep the momentum buffer on the parameter server only.** The reason: in the momentum formula above, the "current gradient $g_t$" slot can simply be filled with the **aggregated average gradient**, which is exactly what data parallelism already computes. The server computes $G_t = \frac{1}{N}\sum_i G_t^i$ from the gradients it receives from the workers, substitutes that $G_t$ into the $g_t$ slot of the momentum formula to update $m_t$, updates the model using that momentum, and then broadcasts **only the updated model** back to the workers. The workers' role (compute gradient → upload) is identical to plain-SGD DP.
+- **Result**: workers don't need to store momentum at all — this directly translates into a reduction in worker-side parameter memory (exact numbers in §47).
+- **No increase in communication cost**: the momentum buffer lives only on the server and is **never transmitted** — so there is **no additional communication** compared to distributed training with plain SGD. The only difference is that the server maintains the momentum buffer and updates the model differently (via the momentum formula instead of plain gradient descent).
+- (Keeping momentum on the worker side is also mentioned as an option, but its concrete trade-offs are covered in the context of §53, where there is no parameter server at all.)
+
+### 47. Extending Data Parallelism to Other Optimizers (2) — Integration with Adam (p.51–53)
+
+- **Recap of Adam in centralized training** ([Week 1, 2] notes, page 37): combines the SGD-momentum idea ($m_t$, preserving direction) with the RMSprop idea ($v_t$, an exponential moving average of squared gradients used as a curvature term to auto-adjust the learning rate) —
+  $$m_t = \alpha \cdot m_{t-1} + (1-\alpha)\cdot g_t, \qquad v_t = \beta \cdot v_{t-1} + (1-\beta)\cdot (g_t)^2$$
+  where $g_t$ is the current gradient from the current mini-batch.
+- **The integration into DP follows exactly the same philosophy as momentum**: both $m_t$ and $v_t$ live **only on the parameter server**, never on a worker. The workers' role is identical to data-parallel SGD — compute a gradient and upload it. The server aggregates (averages) these gradients and can then run whichever update rule is desired — Adam, SGD momentum, or RMSprop. The same notation applies: $G_t$ (the average of all worker gradients) and $G_t^i$ (the gradient worker $i$ computes from its own mini-batch).
+- **Again, no extra communication cost**: the optimizer states ($m_t$, $v_t$) live only on the server and are never transmitted — compared to plain-SGD DP there's no added communication, just **extra computation on the server side** (averaging, computing the weighted sum, computing the norm).
+
+### 48. Revisiting Parameter Memory — Per-GPU Comparison Across Optimizers (p.54–55)
+
+Assuming a parameter server is used, the parameter memory required per GPU (worker):
+
+| Optimizer | Centralized training | Data Parallelism (per GPU) |
+|---|---|---|
+| SGD | $2m$ | $2m$ |
+| SGD with Momentum | $3m$ | $2m$ |
+| Adam | $4m$ | $2m$ |
+
+($m$ = model size)
+
+- **Why SGD shows no difference**: as seen in §44, a worker already needs $2m$ (one copy of the model, one of the gradient) just to run backpropagation — SGD has no extra optimizer state to begin with, so there's nothing to offload to the server.
+- **Why momentum and Adam are smaller under DP**: as seen in §46–47, the extra optimizer state — the momentum buffer $m_t$ or Adam's $v_t$ — **lives only on the parameter server**, never on a worker. Regardless of which optimizer is used, DP workers only ever need "model ($m$) + gradient ($m$) = $2m$"; all remaining optimizer state is entirely offloaded to the server.
+- **Summary**: whether data parallelism actually reduces parameter memory depends **on the optimizer.** This is the concrete answer to what Day 5 §35 flagged — "because the model is fully replicated, data parallelism may not reduce parameter memory": **for SGD, exactly as flagged, it doesn't; but for optimizers with state, like momentum or Adam, it genuinely does (thanks to the parameter server).**
+
+### 49. In-Class Q&A — Must the Server Update the Model? / Interaction with Batch Normalization (p.56–57)
+
+- **Q1. Is it necessary for the parameter server to perform the model update? Can the worker nodes update it instead?**
+  A: yes — the worker nodes can each update the model themselves using the same averaged gradient (whether received from a server or via all-reduce), and the result (accuracy) is identical. But in that case, each worker has to keep optimizer state like momentum or Adam's $v_t$ **locally**, so worker-side parameter memory goes back up to $2m$ (SGD) / $3m$ (SGD momentum) / $4m$ (Adam) — i.e., §48's memory advantage of DP disappears. So **if the parameter server is more powerful and has more memory than the workers, updating on the server side is the resource-saving choice.**
+- **Q2. Considering batch normalization layers, can we say data parallelism and centralized training statistically produce the same model?**
+  A: **no.** In centralized training, batch normalization's mean and variance ($\mu$, $\sigma^2$) are computed over the target mini-batch of $B$ samples, but in data parallelism, each GPU computes these normalization statistics using only its own local $B/N$ samples — especially when workers' data distributions differ (non-IID), $\mu$ and $\sigma^2$ end up different across workers, leading to a **slightly different model** compared to using the global distribution. This is one of batch normalization's limitations, and it's the reason other normalization schemes — **group normalization**, **layer normalization** — have been studied to mitigate this discrepancy (the mechanics weren't covered in lecture).
+
+### 50. Is a Parameter Server Always Needed? — Transitioning to the Fully Decentralized Setting (p.58–60)
+
+- Across everything covered so far, the parameter server's single most important role has ultimately been **just one thing: obtaining the average of all the workers' gradients.**
+- The problem (restated from Day 5 §39): as the number of workers $N$ grows, both the number of gradients the server must receive and the fan-out of the model retransmission grow with it, causing **a severe communication bottleneck at the server itself.**
+- **Question**: can data parallelism be implemented without a parameter server at all, while still achieving **exactly the same performance** as obtaining that average gradient?
+
+### 51. Preliminaries — Communication Primitives: Scatter / Gather / Reduce / Broadcast (p.61–63)
+
+Before diving in, a few communication terms are defined (noted as terms the course won't use that often, but worth pinning down):
+
+- **Scatter**: send a tensor out to all workers, but with **different content for each.**
+- **Gather**: receive values from all workers, as-is.
+- **Reduce**: unlike gather, applies an **aggregation operation — sum or average — to the received values.** This is the key difference between gather and reduce.
+- **Broadcast**: transmit the same single result to every worker.
+
+Viewed this way, **data parallelism is ultimately a repetition of reduce (aggregating gradients) and broadcast (transmitting the updated model)** — workers sending gradients to the server that the server aggregates is the reduce step; the server sending the updated model back to every worker is the broadcast step. Everything covered so far with a parameter server was simply this combination of two operations. **Without a parameter server, how do we implement this reduce+broadcast?** — that's the next question.
+
+### 52. A Naive Approach and Its Limitation
+
+- The simplest (naive) approach: without any parameter server, **each node transmits its computed gradient directly to every other node in the system.** Every node then receives all the different gradients, computes the average itself, and updates its own model — since every node updates with **the same average gradient**, the result is **exactly the same performance** as the parameter-server approach.
+- **Limitation**: this requires all-to-all communication among every pair of nodes, and that transmission itself becomes a severe bottleneck. This raises the question of whether it can be done efficiently, which leads to the conclusion that some kind of **protocol** is needed.
+
+### 53. Data Parallelism in Fully Decentralized Settings — Ring All-Reduce and Recursive Halving (p.64–65)
+
+- **Ring All-Reduce**: nodes are arranged in a **ring topology** for communication. Basic idea (per the step-by-step figure shown in class): each node first transmits its gradient to a neighbor, and the neighbor sums the received value with its own — repeating this and continuously passing the running sum along to the next neighbor eventually brings every node to the full gradient sum. Even this basic form still requires a substantial communication burden.
+  - The **efficient version of ring all-reduce actually used in practice** (details noted as out of scope) splits the gradient into **multiple chunks (e.g., A, B, C, D)**, and at each time step, different GPUs are responsible for transmitting different chunks around the ring (e.g., GPU0 transmits chunk A to the next worker, GPU2 transmits chunk B, and so on) — this process eventually yields the aggregated result for each chunk at different locations, and those aggregated chunks are then shared among all nodes. Described as a fairly simple, well-known algorithm in practice.
+- **Recursive Halving All-Reduce**: another approach — e.g., 8 nodes first exchange gradients with a neighbor at offset 1, then exchange again with growing offsets (halving-style), and repeating this eventually brings all nodes to the sum/average of all 8 gradients. Compared to the naive all-to-all broadcast, this **reduces the bottleneck and the number of communication steps needed** to obtain the average gradient.
+- Many other algorithms exist for obtaining the sum/average of gradients across all workers without a parameter server, and **regardless of which algorithm is used, the shared goal is the same: every worker ends up with the same aggregated gradient.**
+- **In-class student question**: "It looks like there are some overlapping parts — can those redundant parts be removed?" (pointing out that a value received by one node overlaps with a value received via another path). A: **yes, that's possible** — what was shown in class was a simplified version with this kind of redundancy, but **the real ring all-reduce used in practice is a somewhat different, more efficient version that removes this redundancy.**
+
+### 54. Update after AllReduce — Updating the Model Post-AllReduce, and Where Optimizer State Lives (p.66–69)
+
+- Once all-reduce (by whatever method) gives every worker the sum/average of gradients $g = \frac{1}{N}\sum_i g_i$, each worker can update its model **locally** with whichever optimizer it wants (SGD, SGD momentum, Adam, etc.). Since every worker updates with the **same gradient**, all nodes end up with **exactly the same model** after the update, and the next iteration starts again from that identical model — this synchronization is maintained purely through neighbor-to-neighbor communication (all-reduce), with no parameter server involved.
+- **The key difference — where momentum/optimizer state lives**: with a parameter server (§46–47), momentum or $v_t$ could simply live on the server. But **in a fully decentralized setting with no parameter server at all, there's no other option** — **each worker node has to keep its own momentum and $v_t$ locally.**
+- **Consequence**: in the fully decentralized setting, per-worker parameter memory goes back up — gradients, momentum, and (for Adam) the learning-rate-controlling parameter $v_t$ all have to be stored locally, making the memory burden larger than in the parameter-server case (§48's $2m$). **This is the key memory trade-off between having and not having a parameter server** — removing the server reduces the communication bottleneck, but there's nowhere to offload optimizer state, so per-worker memory goes back up.
+
+### 55. The Final Question: Can Parameter Memory Be Reduced Even in the Fully Decentralized Setting? — Introducing ZeRO-DP (p.70)
+
+- The **final question** of this entire data-parallelism lecture: in a fully decentralized setting with no parameter server, is there any way to reduce parameter memory?
+- Revisits the **DeepSeek-V3 technical report** slide first cited early in the course (Day 5 §33) to motivate data parallelism's importance, pointing out that it contained the term **"ZeRO-1"** — a term that meant nothing at the time, but is exactly the answer to the question now on the table (how to reduce the memory required, particularly for the optimizer).
+- **ZeRO (Zero Redundancy Optimizer) DP**: proposed in a paper from Microsoft published around 2019–2020, *"ZeRO: Memory Optimizations Toward Training Trillion Parameter Models"* (arXiv:1910.02054). **Core idea**: eliminate the **redundant copies** of model state (model parameters, gradients, optimizer states) that exist across different workers — ZeRO **progressively partitions** optimizer states, gradients, and (if desired) model parameters across the data-parallel workers.
+- In the original (fully decentralized) DP, every GPU stores the **full model, full gradients, and full optimizer states** (maximal redundancy). ZeRO splits this into three stages: **ZeRO-1** (partition only optimizer states), **ZeRO-2** (partition optimizer states + gradients), **ZeRO-3** (partition optimizer states + gradients + model parameters). The motivation: reduce memory and make training more efficient.
+
+### 56. ZeRO-1 DP — Partitioning Only the Optimizer States (p.71)
+
+Mechanism, illustrated with 4 GPUs and the gradient flattened into 4 chunks A/B/C/D:
+
+1. **Each worker computes a gradient from its local dataset** — with different local mini-batches, the values differ: GPU0 gets $[a_0,b_0,c_0,d_0]$, GPU1 gets $[a_1,b_1,c_1,d_1]$, and so on. This step is conceptually identical to the original DP.
+2. **Gradient synchronization**: via ring all-reduce (or any other method), every GPU obtains the **full averaged gradient** — $\left[\frac{a_0+a_1+a_2+a_3}{4}, \frac{b_0+b_1+b_2+b_3}{4}, \frac{c_0+\cdots}{4}, \frac{d_0+\cdots}{4}\right]$ in full, identically, on every GPU. This step is also no different from the original DP — every worker receives exactly the same gradient.
+3. **This is where it diverges from the original DP**: each GPU only stores the **optimizer state (e.g., Adam moments) for the parameter chunk it's responsible for** — GPU0 has optimizer state only for chunk A, GPU1 only for chunk B, and so on. So GPU0 only updates A to obtain $A'$, GPU1 only updates B to obtain $B'$, and so on for the rest.
+4. **The goal is for every GPU to end up with a complete, up-to-date model** — since GPU0 only updated A and GPU1 only updated B, building a single model reflecting all the data requires sharing $A', B', C', D'$ across all the GPUs. Once that sharing is done, every GPU has the same final model, and the result is **exactly identical to the original DP.**
+- **Advantage**: satisfactory performance is preserved while **saving memory used to store optimizer states.**
+- **Cost**: **additional parameter communication** is needed after the optimizer update, to reassemble the final model ($A'$ through $D'$) — communication the original DP never needed (in the original DP, once gradients are synchronized, each GPU immediately updates the full model itself, with no need to separately re-share parameters).
+
+### 57. ZeRO-2 DP — Partitioning Optimizer States and Gradients (p.72)
+
+- Step 1 (local gradient computation) is identical to ZeRO-1: GPU0 gets $[a_0,b_0,c_0,d_0]$, GPU1 gets $[a_1,b_1,c_1,d_1]$, and so on.
+- **The difference is in gradient synchronization**: instead of distributing the full averaged gradient to every GPU (as in ZeRO-1), **each GPU only receives the gradient partition it's responsible for** — e.g., GPU0 gets only $\frac{a_0+a_1+a_2+a_3}{4}$ (the average for A), GPU1 gets only $\frac{b_0+b_1+b_2+b_3}{4}$ (the average for B). So the **volume of communication is already reduced** at this step, since the full gradient is never broadcast to everyone.
+- The update step that follows is identical to ZeRO-1: each GPU updates only its own chunk using its own optimizer state, obtaining $A', B', C', D'$.
+- The goal is the same — to bring every parameter up to date, $A', B', C', D'$ are shared among all GPUs so every GPU ends up with the same final model.
+- **Summary**: ZeRO-2 reduces gradient communication volume beyond ZeRO-1 (receiving only its own assigned partition rather than the full gradient), and per-GPU storage shrinks to cover **gradients** in addition to optimizer states.
+
+### 58. ZeRO-3 DP — Partitioning Optimizer States, Gradients, and Model Parameters (p.73)
+
+- Why partition the model parameters as well is described as somewhat less intuitive than the previous two stages — it's an algorithm that's actually **inefficient in terms of communication.**
+- **Mechanism**: each worker now stores only a **partition of the model parameters.** The problem: forward/backward propagation needs the full model, so how does a worker compute with only a fraction of it? The answer: **the remaining parameters are temporarily gathered across workers on demand**, whenever needed — this is very inefficient communication-wise (communication is required frequently, every time computation needs it).
+- Gradient synchronization and the update step are identical to ZeRO-2 (each GPU updates only its own assigned chunk).
+- **The decisive advantage**: unlike ZeRO-1 and ZeRO-2, there is **no need to permanently reconstruct the full model** after the update — since no one holds a persistent full copy of the model to begin with, parameters are simply gathered when needed and scattered again afterward.
+- **The communication-pattern difference between ZeRO-1/2 and ZeRO-3**: in ZeRO-1 and ZeRO-2, parameter communication mainly happens **after the optimizer update**, to reconstruct the full model. In ZeRO-3, parameter communication happens **on demand, during forward and backward passes** — because the full model is never persistently replicated anywhere.
+
+### 59. Comparing the Four ZeRO Variants, and DeepSeek-V3's Actual Choice (p.74)
+
+| | Original DP | ZeRO-1 | ZeRO-2 | ZeRO-3 |
+|---|---|---|---|---|
+| Parameters | Replicated | Replicated | Replicated | **Partitioned** |
+| Gradients | Replicated | Replicated | **Partitioned** | Partitioned |
+| Optimizer states | Replicated | **Partitioned** | Partitioned | Partitioned |
+
+- As the table shows, moving from ZeRO-1 → ZeRO-2 → ZeRO-3 partitions progressively more state, shrinking per-GPU memory further, at the cost of progressively more communication needed to reassemble parameters (especially ZeRO-3's on-demand gathering) — a clear **memory-vs-communication trade-off.**
+- Revisiting the DeepSeek-V3 technical report slide first cited in Day 5 §33: what DeepSeek-V3 actually adopted was **ZeRO-1** — partitioning only the optimizer states, while keeping gradients and the full model parameters replicated on every GPU.
+
+### 60. Conclusion — Wrapping Up the Data Parallelism Chapter, and the Remaining Limitation (p.75–77)
+
+- **Core idea**: splitting the dataset across multiple local nodes.
+- **Performance**: achieves (statistically) the same performance as centralized training — exactly identical under full-batch gradient descent, statistically identical under mini-batch gradient descent (§42–43).
+- **Memory**: with a fixed target mini-batch size, **activation memory** is reliably reduced. **Parameter memory** depends on the optimizer — unchanged for SGD, but reducible via the parameter server (or ZeRO-family techniques) when the optimizer carries state, like momentum or Adam (§44, §48, §55–58).
+- **Delay**: a conditional advantage depending on the ratio of communication delay to computation — it can reduce training time or fail to, but it's certain that parallel computation lets far more data be processed per time step (§45).
+- Extendable to other optimizers (SGD momentum, Adam, etc.) (§46–47), and equally implementable without a parameter server, in a **fully decentralized setting**, using all-reduce-family algorithms (§52–54) — within which ZeRO-DP can further reduce memory (§55–59).
+- **The remaining limitation**: a slide states that "although data parallelism is a good solution for dealing with large-scale datasets, it can still cause an issue" — the lecture moved past this sentence mid-way and went straight into the next preview. What that limitation actually is becomes clear in the closing remark of §60: **data parallelism, by design, replicates the entire model as-is on every GPU**, so when **the model itself is very large**, both the parameter-memory problem and the activation-memory problem (since activation memory also depends on model size) remain fully in place — data parallelism alone **cannot solve the large-scale-model problem.**
+- **Next week's preview**: **model parallelism** strategies, which intentionally split the model across multiple GPUs.
+- The lecture closed by inviting questions. *(The audio's final sentence trails off mid-way — something like "and if you didn't check my…" — and is unclear; recorded only up to this point, without guessing at the rest.)*

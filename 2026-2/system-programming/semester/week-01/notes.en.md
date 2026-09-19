@@ -336,3 +336,121 @@ Task switching happens in four cases:
 - Scheduling always happens **from the active queue only** (tasks on the expired queue have no time slice left, so there's no reason to pick them). Processes on the active queue get moved to expired one by one as their slices run out, until eventually the active queue is completely empty and every task sits on the expired queue.
 - **At that point, all the kernel does is swap the pointers**: there are really only two arrays, and `active`/`expired` are just pointers to whichever array is currently playing which role. So the moment every task's time slice is used up, the kernel simply **swaps which pointer points to which array**, and every task effectively gets a fresh time slice at once — no need to individually move each task to a new queue, which is a very elegant implementation.
 - The lecture wrapped up here for time, with process scheduling (CFS and beyond) **explicitly deferred to the next lecture** — this note does not speculate about that content.
+
+## Day 5 (2026-09-18) — CFS, ULE, and EEVDF: Fairness and the EDF Connection
+
+> Source: 2026-09-18 lecture-audio STT (from the `recap` project's result file, `2026-09-18-system-programming-1.json`, 88 paragraphs, ~75 minutes). **Note a full slide-deck swap**: `L02-processscheduling.pdf`, used in Day 4, was covered only through page 16 of 54 and is not picked back up from here — it's effectively superseded. This session doesn't continue L02's remaining pages; instead it opens a **separate, brand-new deck, `L03-processscheduling.pdf`** ("Lecture 03. Process Scheduling (2)"), starting fresh with a review of scheduler evolution. The first part of the session is Q&A and wrap-up on the O(1) scheduler from last time (`schedule()` invocation, limitations); the middle goes deep on CFS (weight/vruntime/red-black tree, a worked example, comparison with FreeBSD's ULE); the back half introduces the motivation for EEVDF and closes with an EDF worked example. **EEVDF's actual mechanics (lag/eligibility computation, etc.) were not covered this session and were explicitly deferred to next time** — this note does not speculate about that content.
+
+### 43. O(1) Scheduler Wrap-Up Q&A — nice vs. Static/Dynamic Priority, Time-Slice Splitting on `fork()`
+
+- **Question: how do nice value and static priority differ?** The nice value is **set by the user** — via the `nice` (or `setpriority`) system call in user mode. That system call doesn't directly change static priority — it changes the nice value first, and **the kernel then uses that nice value as input to finally update static priority**. So nice is what the user touches, and static priority is what the kernel's scheduler code actually uses — they refer to essentially the same thing, but at different layers.
+- **There's a cap on how far a user can push the nice value**: the default nice value is the **maximum** value a user is allowed to set (i.e., the "nicest," lowest-priority value). Users can only move **toward nicer**, never the other way — a fairness constraint. (The name "nicer" comes from the fact that a lower priority means yielding more running opportunities to other tasks.)
+- **Static priority and dynamic priority (`prio`) have separate roles**: static priority determines **the length of the time slice**. Dynamic priority is what the scheduler uses **when picking the next process to run** — a distinct role. The design rationale for dynamic priority is to favor I/O-bound/interactive processes over CPU-bound (batch) ones, and internally the kernel calls the adjustment value a **"bonus."** To tune this bonus, the kernel monitors/tracks each task's interactivity — e.g., its average wait time.
+- **Relevant `task_struct` fields**: `static_prio` and `prio`. When the user changes the nice value, `static_prio` changes, and `static_prio` determines the time slice. After a task has run on the CPU for a while, the scheduler may adjust its priority based on monitored interactivity — that's `prio` (dynamic priority). When the scheduler picks the next task from the run queue, it picks the task with the **highest `prio`** (i.e., the smallest number).
+- **Time-slice splitting on `fork()`**: every time a parent calls `fork()` to create a child, the kernel takes the parent's **remaining** time slice (say, 10) and **splits it in half**, giving 5 to the parent and 5 to the child. (The professor noted the slide's formula had a typo — the concept of "split it in half" matters more than the exact equation shown.) The design rationale: to **prevent a process from hoarding CPU resources by repeatedly forking off descendants** — without this split, repeated forking could let a process hold the CPU for far too long.
+
+### 44. How `schedule()` Gets Invoked — Direct Invocation vs. Lazy Invocation
+
+- `schedule()` is the scheduler's key function — it selects a new process from the run queue and assigns it the CPU. Ultimately it replaces the previous process's virtual address space with the new one's and carries out the **process switch** from the previous task to the next (mechanics covered in Day 3).
+- There are four cases where scheduling becomes necessary:
+  1. A running process moves from running (or runnable) to **blocked** (e.g., waiting on a timer or I/O event).
+  2. The running task **exhausts its time slice** (timeout).
+  3. A task with **higher priority than the currently running task becomes ready** — the current task must be preempted.
+  4. The running process **terminates**.
+- **Cases 1 and 4 require direct invocation** — the task is blocking or terminating right now, so the kernel has no other option. **Cases 2 and 3 use lazy invocation** — since the task can keep running a bit longer without urgency, the kernel just **sets a flag**, and at some later scheduling point it checks that flag and, if set, performs the scheduling.
+- **Worked example**: process P1 calls a system call, moving from running/runnable to blocked (case 1, direct invocation) → P2 is selected to run on the CPU. At this point P1 becomes ready again (assume P1 has higher priority than P2) → this is case 3, requiring lazy invocation. So both direct and lazy invocation of `schedule()` are used in the Linux kernel to handle these different situations.
+
+### 45. O(1) Scheduler Limitations (1) — Too Much Riding on One Priority Value, and the Unfair Priority Effect
+
+- **Problem 1 — a single value (nice/priority) affects too many things at once**: priority (nice) affects both responsiveness and overhead simultaneously. A long time slice hurts responsiveness; shrinking the time slice via nice to improve responsiveness (e.g., ~5ms at nice19/priority139) causes more frequent context switches and thus more context-switch overhead. Responsiveness and overhead end up coupled through this one value — not a great design.
+- **Problem 2 (the more important one) — the Unfair Priority Effect**: a one-level priority difference doesn't produce a **consistent CPU-share ratio**.
+  - Example A: task1 priority=120, task2 priority=121 (difference of 1) → time slices of 100ms and 95ms respectively (actual difference 5ms) → as a ratio, task2 gets a **5% shorter** time slice.
+  - Example B: task1 priority=138, task2 priority=139 (same difference of 1, actual difference still 5ms) → but now task2 gets a **50% shorter** time slice. (For this ratio to hold, task1 would be roughly 10ms and task2 roughly 5ms — consistent with the ~5ms minimum time slice near nice19/priority139 mentioned earlier.)
+  - Conclusion: **the same one-level priority difference produces wildly different CPU-share ratios (5% to 50%)** — this is the core unfairness of the O(1) scheduler.
+
+### 46. O(1) Scheduler Limitations (2) — Starvation and Perturbation in the Expired Array
+
+- **Starvation**: one of the scheduler's core goals is preventing it — a task or process never getting the opportunity to run in time.
+- **The starvation risk in the expired array**: the active↔expired pointer swap only happens once the active array has no active tasks left at all (see §42). But the developers, wanting to **improve interactive-process responsiveness**, allowed an interactive task whose time slice is fully exhausted — which by design should move to the expired array — to instead be **reinserted into the active array**, treating it almost like a real-time task. This can leave batch/CPU-bound processes with essentially no chance of ever running.
+- **Perturbation**: this reinsertion practice actually delays the array swap and makes tasks sitting in the expired array wait far longer — a real problem. To mitigate it, O(1) introduced a lot of complex heuristics — e.g., using a task's **sleep-average history** to estimate its interactivity and adjust dynamic priority accordingly. Overall, the design and implementation weren't very clean.
+
+### 47. Enter CFS (Completely Fair Scheduler) — Weight, Vruntime, Red-Black Tree
+
+- **CFS (Completely Fair Scheduler)** emerged to fix O(1)'s unfairness — the goal, as the name says, is to be "completely fair." There's an inventor and someone who inspired the approach (the professor: "you don't need to remember the names"), but based on several research papers, Linux developers brought this algorithm into the kernel — a **significant departure** from the traditional Unix process scheduler.
+- **CFS's goal**: guarantee every process its fair share of the CPU — fairness is everything. It also aims to improve on O(1)'s interactive performance.
+- **CFS's three core pillars**:
+  1. **Weight instead of priority** — there's no more priority concept at all; each task has its own **weight**.
+  2. **Virtual runtime (vruntime)** — replaces dynamic priority, computed from weight.
+  3. **Red-black tree (RB tree) as the data structure** — instead of O(1)'s simple array/list scheme (140 lists), CFS uses an RB tree, which looks more complex but is actually more efficient (covered below).
+
+### 48. CFS's Fairness Model — the Weight Distribution Formula and the nice→weight Mapping
+
+- **Basic idea**: aiming for an ideal multitasking system, CFS gives each task CPU time **proportional** to its weight. E.g., if the scheduler is distributing 100ms across T1 through Tn, each task gets (its own weight ÷ total weight) × 100ms.
+- **nice → weight mapping**: the user input is still the nice value, but instead of mapping it to priority like O(1) did, CFS maps it to **weight**. The philosophy is to avoid the unfair priority effect from §45.
+- **Design goal**: a one-level nice difference should always produce roughly a **10-percentage-point** CPU-usage difference. The baseline: **nice=0 → weight=1024** (the same default as O(1)). Two tasks with the same nice value split the CPU 50:50; if one task's nice is one level higher (one level lower priority), the difference is exactly 10 percentage points.
+- This relationship **holds regardless of what the baseline nice value is** — unlike O(1), which depended on the specific base value of 120, CFS removes that dependency. That 10-percentage-point CPU-usage difference corresponds to roughly a **25% increase** in the actual weight value (e.g., 1024 → 1277 is about a 25% increase) — every adjacent pair of nice values in the table satisfies this same relationship.
+
+### 49. Defining Vruntime and a Worked Example — Exam-Critical
+
+- **What vruntime is, and the rule for using it**: CFS no longer has O(1)'s dynamic priority — vruntime is the key value used to pick the next process to run. Vruntime reflects how long a task has already run, and, accounting for its weight, how much longer it should still run.
+  - **A smaller vruntime** means the task has received **less** CPU time than it should have → the scheduler should give it priority.
+  - **A larger vruntime** means the task has received **more** CPU time than it should have → it gets less opportunity going forward.
+  - **The scheduling decision = pick the task with the smallest vruntime.**
+- **Worked example — stage 1 (baseline: equal weight)**: two tasks both have nice=0 (static priority=120), so they have **equal weight**. With a target latency period of 10ms, that 10ms splits evenly into time slices of **5ms and 5ms**. Their observed actual execution runtimes so far are **task1=40ms, task2=30ms**. Since weight is equal, the vruntime conversion factor is 1 — so **vruntime equals actual runtime**: 40ms and 30ms. (This stage just establishes that equal weight ⇒ vruntime = actual runtime.)
+- **Worked example — stage 2 (extended to unequal weight)**: the same example is then extended — task1 stays at static priority **120** (nice0, baseline weight), but task2 becomes static priority **125** (nice5, a lighter weight than baseline) — a priority difference of 5. That weight ratio changes how the 10ms target latency splits into time slices: **task1=7.5ms, task2=2.5ms** (a 3:1 ratio — roughly matching the real CFS nice-to-weight table's nice0=1024 vs. nice5=335, a ratio of 1024/335≈3.06). The actual execution runtimes are kept the same: **task1=40ms, task2=30ms**.
+  - Resulting vruntime: **task1=40ms** (baseline weight, conversion factor unchanged), **task2=9ms** (the value stated in lecture — different from its actual runtime of 30ms).
+  - **⚠ Flagging a numeric inconsistency**: the professor immediately followed this by explaining that "this task ran more than it should have, so its virtual runtime is higher than expected" — which implies task2's vruntime should be **larger** than 30ms (the standard CFS formula gives 30×(1024/335)≈91.7ms). In other words, the stated figure of "9ms" doesn't match the explanation that follows it — a digit was plausibly dropped somewhere in speech or in the STT pipeline (e.g., "92" becoming "9"). This note preserves the number as actually stated in lecture (9ms) while flagging the inconsistency. **What's solid is the direction**: a task with a weight lighter than baseline (i.e., higher nice) accumulates vruntime faster relative to its actual runtime, gets treated as having "already received more than its fair share," and consequently gets less CPU opportunity going forward.
+  - (Note: the lecture also stated, back to back, "if a task's weight is lighter than default, its vruntime increases more slowly" immediately followed by "if the weight is small, the vruntime increment grows larger" — two directly contradictory clauses. The direction adopted above — smaller weight ⇒ faster-growing vruntime — is the one consistent with standard CFS behavior and with the explanation that followed.)
+
+### 50. CFS Time-Slice Computation and Scheduling Flow — Red-Black Tree, the Leftmost Node, Preemption Conditions
+
+- **Time-slice computation**: CFS is still a preemptive, round-robin-like scheduler, so time slices still exist — `time_slice(task) = target_latency × (task_weight ÷ total weight)`. The kernel sets `target_latency` itself based on several factors (roughly 100–200ms; the exact rule was called unnecessary to memorize).
+- **How to quickly find the smallest vruntime**: with O(1)-style arrays/lists, the kernel would have to scan everything each time — O(n). To cut this down, CFS introduces a **red-black tree** — insertion, deletion, and search are all **O(log n)**.
+- **Run-queue structure**: Linux keeps a real-time run queue (100 priority levels, 100 doubly-linked lists — carried over from the O(1) era) separate from the CFS run queue (for normal tasks, **a single red-black tree**). Ordinary application tasks mostly live in the CFS run queue. CFS's RB tree is ordered by vruntime as the key, and the next task to run is the **leftmost node**.
+- **Scheduling flow (on every scheduler tick — a general concept, not specific to CFS)**:
+  1. On each scheduler tick, a timer interrupt fires, and the scheduler first checks **preemptibility**.
+  2. It subtracts the elapsed tick period from the current task's time slice — if this drops to zero or below, it sets a flag (**condition A: time slice exhausted**).
+  3. It updates the current task's vruntime — if the updated vruntime now exceeds the next task's (i.e., the leftmost node's) vruntime, it sets the flag (**condition B: this task has now run more than another task** — e.g., if the next task's vruntime is 50 and the current task's goes from 40 to 42, this condition is met the moment it crosses).
+  4. At the actual scheduling point, the scheduler checks this flag — if set, it takes the current task off the CPU and inserts it into the RB tree (**enqueue**), then pulls the leftmost task out of the tree (**dequeue**) to run on the CPU. Both operations are O(log n).
+- That completes the full picture of the two key schedulers in Linux history: **O(1) and CFS**.
+
+### 51. "Is CFS Always Good?" — The Battle of the Schedulers Paper (CFS vs. FreeBSD's ULE)
+
+- **The question raised**: is CFS always right? A real research paper is presented as evidence — **"The Battle of the Schedulers: FreeBSD ULE vs. Linux CFS,"** published at USENIX **ATC** (Annual Technical Conference). (The professor's aside: OSDI and SOSP are the top systems venues, with ATC and EuroSys just behind them, often covering practical issues.)
+- **What's compared**: FreeBSD's scheduler is called **ULE** (macOS is also BSD-derived, for reference). The paper compares ULE against CFS.
+- **The two design philosophies**:
+  - **CFS**: pursues complete fairness, true to its name — a single red-black tree, no distinction between interactive and batch tasks. Tasks are ordered by vruntime, the leftmost is always chosen, and a task returns to the run queue once its time slice expires.
+  - **ULE**: keeps **two separate run queues**, one for interactive and one for batch. Interactive tasks have **absolute priority** over batch tasks — a batch task can only run once the interactive run queue is completely empty.
+  - Why this doesn't break fairness under ULE's design rationale: interactive tasks spend most of their time **sleeping**, so batch/CPU-bound tasks get their opportunity to run in the gaps.
+- **Experimental results**: overall, there was no clear performance gap between the two schedulers (sometimes ULE did better, sometimes CFS did, with no obvious pattern). But one striking, somewhat extreme scenario ran an interactive task alongside a CPU-bound (batch) task simultaneously:
+  - **CFS**: both tasks get roughly **15%** of the CPU each, with nearly identical slopes — not perfectly but almost fair, with no starvation.
+  - **ULE**: the interactive task runs to completion first, and only then does the batch task get to run — the batch task waits roughly **150 seconds** (i.e., starvation). Interactive tasks get shorter latency (higher responsiveness) under ULE, but at the cost of fairness — the batch task starves.
+
+### 52. CFS's Limitation → the Motivation for EEVDF
+
+- CFS focuses purely on fairness — it picks the task with the smallest vruntime, and CPU share is determined entirely by weight. It gives interactive and batch tasks the same "fair" opportunity, with no distinction between them.
+- **The core limitation: CFS doesn't account for latency at all.** The nice value controls **how much** CPU time a task receives (its rate/share), but not **how soon** it wants that CPU time. Different tasks can end up with the same CPU-share rate while having very different latency requirements — interactive tasks need shorter latency, but CFS can't express or handle that. **This is the motivation behind EEVDF.**
+
+### 53. Introducing EEVDF — Concept and Goals Only (Mechanics Deferred to Next Time)
+
+- **EEVDF = Earliest Eligible Virtual Deadline First**. A relatively new scheduler, added in **Linux 6.6** in 2023 (the professor noted some Android phones or Ubuntu servers may still run older kernels than this). It's a **successor to, and extension of, CFS** — built on the same underlying concept, still **O(log n)** in complexity.
+- The core academic idea actually dates back to the **mid-to-late 1990s** (the professor couldn't recall the exact year — roughly 30 years old), but Linux developers adopted it to solve the CFS problems from §52.
+- **Goal**: improve responsiveness for latency-sensitive scheduling while **preserving CFS's fairness**.
+- **Key concepts (named but not explained — the computation methods weren't covered this session)**: **lag**, **eligibility**, **eligible time**, and **virtual deadline**. These were only mentioned as the values used in scheduling decisions.
+- **A very simplified CFS vs. EEVDF comparison** (the professor: "not entirely accurate, just meant to convey the concept"): assuming two tasks share the same nice value (same weight), under CFS's complete fairness an interactive task might have to wait its turn in real time just like any batch task, since there's no distinction between them — but under EEVDF, that interactive task can get an earlier opportunity to run on the CPU.
+- **Important**: EEVDF combines two concepts — CFS (fairness/vruntime) and **EDF (Earliest Deadline First, the deadline-based scheduling policy from real-time systems)** — with the core idea being "the task with the earliest deadline gets the highest priority." **However, exactly how this combination is implemented (how vruntime and virtual deadline are merged) was not covered this session and was explicitly deferred to next time** — this note does not speculate about that mechanism.
+
+### 54. Earliest Deadline First (EDF) — Worked Example
+
+- As background for understanding EEVDF, the classic real-time scheduling policy **EDF** was covered. Core rule: **the task with the earliest deadline gets the highest priority.**
+- **Worked example**: three tasks all arrive at **T0**.
+  - **Task A**: execution time **3ms**, deadline **7ms**.
+  - **Task B**: execution time **2ms**, deadline **4ms**.
+  - **Task C**: execution time **1ms**, deadline **6ms**.
+- **Scheduling order under EDF**:
+  1. At T0, compare the three deadlines (7, 4, 6) → the earliest is B (4ms) → **B runs first**, taking 2ms (finishes at T2).
+  2. Comparing the remaining tasks, A (deadline 7ms) and C (deadline 6ms) → C has the earlier deadline → **C runs next**, taking 1ms (finishes at T3).
+  3. Finally **A runs**, taking 3ms (finishes at T6 — within its 7ms deadline).
+  - **Final order: B → C → A** (total execution time 2+1+3=6ms; all three tasks finish within their own deadlines).
+- **EDF's limitations**: it requires **precise deadline information** for every task, and since the scheduler must compare deadlines whenever a new task arrives, it can suffer from **high context-switching overhead** — a new task with an earlier deadline than the currently running one always triggers a context switch. This is why EDF is mainly used in **RTOSes (real-time operating systems)**, with general-purpose schedulers not adopting it directly — the only stated connection is that **EEVDF borrows the deadline concept from it**.
+- The lecture ended here, with an explicit note that "**we'll continue with EEVDF next time**" — this note does not speculate about EEVDF's detailed mechanics (lag/eligibility computation, etc.).
