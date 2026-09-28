@@ -523,3 +523,253 @@ This section is the professor's brief recap of a student presentation on a paper
 - **Student question**: given that performance at the exact minimum/maximum period boundary isn't necessarily ideal, is there a practical case where it would actually be optimal to deliberately slow the system down or adjust the period to land exactly on that boundary (e.g., the minimum-max point), rather than leaving it as it naturally falls?
 - **Professor's answer**: it depends on the system. **In this simplified (toy) example**, performance outcomes are the same regardless of where the period is set within the valid range, so there's no such effect here. However, in a **control-system** context, reducing the period actually can improve controller performance — due to other factors not covered in this lecture. He was explicit that this toy example itself has no such effect.
 - With no further questions, the session ended with **"see you next week"** (the final session of the week-2 lecture notes).
+
+## 23. [Day 6] Revisiting Exercise material — a sensor-sampling-period demo and formalizing the utilization lower bound (student presentation, Changyoon)
+
+> Source: 2026-09-22 lecture recording (sixth session; recap project result document `2026-09-22-real-time-systems-1.json`, titled "Student Presentations & Publication Venues in Computer Science," roughly 80 minutes total). A Tuesday class; the presenter is a student named **Changyoon**. **⚠️ Following the same principle as sections 13, 16, 18, and 20, this section too is recorded with no slide correspondence** — no Exercise file (presumably a new problem following Exercise B) or slide deck for this session exists in `_private/`. The opening of the talk (t≈144–600) appears to be a stretch where the student runs an actual physical demo with a microphone/camera, and the STT text is nearly empty across that gap — **the visual content of the demo itself isn't captured in the recording and can't be reconstructed; what follows is recorded starting from the student's spoken recap right after the demo ends.**
+
+### 23.1 Demo results — the sweet spot between sampling period and performance
+
+- Changyoon explains the results of a demo he prepared (the specific device/simulation can't be reconstructed), reporting that some metric increases at first but **stops increasing — or even drops — once it approaches a certain point "around 1/2."** ⚠️ Which axis this "1/2" refers to (a normalized value of the sampling period itself, or some other ratio) can't be pinned down from the STT alone.
+- **His own interpretation (hypothesis)**: as the textbook describes, the system has to compute the actual actuation instructions (e.g., moving rollers), and that computation itself takes time. So sampling more often means the per-sample actuation-computation time grows, and a **sweet spot ends up sitting somewhere between the maximum and minimum** — a live demonstration that "faster is always better" is not true.
+
+### 23.2 Formalizing the problem — re-deriving the train-sensor example and the upper bound (cross-checked against Day 5, section 22.3)
+
+- To motivate why the demo matters, Changyoon **re-formalizes the train/sensor example from scratch**: the sensor's visibility is 100 meters, and the problem to solve is "how often should we check the sensor?"
+- **Too-infrequent sampling (violating the upper bound)**: if we check at 4:00 and again at 5:00, and an obstacle appears right at 4:00 in the worst case, we miss it — an hour is clearly too long.
+- **Too-frequent sampling (violating the lower bound, introduced qualitatively)**: a task with a 1-second execution time run on a 1-second period is fine, but on a 0.1-second period, requests keep piling up until they're dropped, causing delay — tied to the real-world constraint that computing resources are ultimately shared (cost, space, heat).
+- **Re-deriving the upper bound**: the student independently reconstructs an argument that is, in substance, identical to the one the professor gave in Day 5, section 22.3.
+  1. At the exact moment the sensor is checked, if an obstacle exists just beyond 100 meters, the sensor reports "no obstacle."
+  2. Only at the **next period** is the obstacle detected (now within 100 meters) — in the worst case, detection is delayed by exactly one period.
+  3. Detection triggers an alarm immediately, and the conductor hits the brakes after a maximum reaction time.
+  4. The braking distance is computed as the area under the velocity-time curve (high-school physics).
+  - Condition: the total distance (one period's delay + reaction-time delay + braking distance) must be less than 100 meters to avoid a collision. One difference from section 22.3: Changyoon expresses this total distance as "speed × (one period + delta)," folding the reaction-time/braking margin into a single delta term — apparently a compressed restatement of 22.3's step-by-step derivation.
+- **The lower bound is deferred**: "that covers one direction; the other direction (the lower bound) we'll get to later — there's a hybrid approach we'll learn then," he says, moving on to the utilization discussion in 23.3.
+
+### 23.3 The meaning of utilization and the necessary condition ΣU ≤ 1
+
+- **Question posed**: if utilization is 0.9, what does that number mean?
+- **Answer — CPU occupancy**: e.g., running three tasks on one platform, the platform spends about 90% of its time executing — out of 1,000 time units, roughly 900 are computation and the remaining 100 are idle.
+- **What if ΣU > 1?**: the total demand to execute out of 1,000 units exceeds 1,000, so **no feasible schedule exists at all.** The condition, then, is that "utilization — execution time divided by period, summed over all tasks — must be under 1" — **he explicitly flagged this as a necessary condition, not a sufficient one** (the student independently re-deriving the same ΣU>1 necessary-condition argument as Day 5, section 21.2).
+- **The feasible period range for a given task**: the other tasks' fixed execution times and periods must be considered together — shrinking this task's period too much pushes ΣU over 1, while enlarging it eases scheduling but hurts this task's own responsiveness. The range is ultimately bounded by the other tasks' deadline requirements.
+
+### 23.4 The EDF sufficient condition and critical-instant reasoning, revisited
+
+- While prefacing that "this is a very simplified form, and the fuller version comes in a later lecture," Changyoon states as a **rule of thumb that earliest-deadline-first (EDF) always works whenever this ΣU≤1 condition holds.** ⚠️ This matches the well-known Liu & Layland result (for EDF, ΣU≤1 is necessary and sufficient), but this session doesn't cover the proof or the precise conditions.
+- **A more striking claim (a generalized critical instant)**: even if tasks' first release times aren't synchronized (release offsets exist), even if execution times are already at their worst case, and even with an arbitrarily large number of tasks, the conclusion is the same — **given only execution times and periods, feasibility can be determined immediately, with no need to worry about release offsets or jitter.** This wraps up the problem by re-emphasizing the importance of critical-instant reasoning (connecting to the synchronization-point argument from Day 5, section 20).
+- With no questions raised, he notes "this isn't a textbook problem, it's a research-paper discussion" and moves to the second presentation (section 24).
+
+## 24. [Day 6] Student paper presentation — S3K: A Partitioning Kernel with Capabilities to Control Scheduling
+
+> ⚠️ The presenter's name isn't confirmable from the STT — the previous presenter (Changyoon) jokingly calls him "Kemp" (with an "alien" joke attached), but the presenter himself, introducing himself, says he "doesn't really have a name" and never gives his actual name. The paper PDF isn't in `_private/`; what follows is reconstructed purely from the presenter's spoken summary (which, per the assignment, covers only the abstract/intro level rather than the full paper).
+
+- **Citation**: "A Partitioning Kernel with Capabilities to Control Scheduling," authored by researchers at KTH Royal Institute of Technology.
+- **Problem addressed**: many existing **partitioning kernels** are too static, making it hard to adjust resources when a system's requirements change.
+- **S3K's goal**: a partitioning kernel for RISC-V systems that provides strong **spatial and temporal isolation** while still allowing resources (including execution time) to change dynamically — achieved via a **capability-based** mechanism for controlling resources.
+- **Authors' argument**: safety-critical systems need more than plain memory protection — they also need (1) predictable timing, (2) protection against timing-based information leaks, and (3) the ability to adapt as requirements change.
+- **Comparison with existing systems**: ARINC 653, seL4, and Composite each provide some of these features, but none combines all of them. S3K addresses this by treating **execution time itself as a capability** and combining a **time-driven scheduler**, a **RISC-V instruction extension**, and **constant-time kernel operations** — together these let resources be reassigned dynamically while keeping different parts of the system isolated from each other.
+- **Significance**: the goal is a system that is simultaneously safe, predictable, and flexible — aimed especially at domains like **avionics**, where resources must be reallocated while the system keeps running.
+
+## 25. [Day 6] Student paper presentation — Lynx: A Unified System for Online Training and Inference
+
+> ⚠️ No presenter name appears in the STT. The presenter states upfront that "per the assignment's requirements, I only read the abstract and introduction and I'm summarizing those," so the content below is an introduction-level summary rather than a full-paper treatment. The paper PDF isn't in `_private/`.
+
+### 25.1 Problem setup — the inefficiency of "separate setup" infrastructure
+
+- **Motivation**: modern systems (e.g., LLM services) need to keep evolving even while deployed — e.g., **continuous retraining** to detect and reject jailbreak attempts, or to incorporate user feedback.
+- This requires running training and inference workloads **concurrently on shared GPU clusters**, but current industry practice runs the two on **completely separate infrastructure** — a "separate setup" — which simplifies management but causes **inefficient resource utilization**.
+- **On the inference side**: real traffic has distinct peak/off-peak periods, yet systems are often provisioned for continuous high-traffic demand, wasting resources off-peak.
+- **On the training side**: tensor/data/pipeline parallelism are widely used, but a naive pipeline-parallel setup creates sequential dependencies in both the forward and backward pass, leaving GPUs idle.
+- **Numbers cited**: on 8 A100 GPUs, separate-setup configurations (1–2 inference nodes + 2–3 training nodes) show very low utilization when run concurrently — inference in particular only about **13%**. A more advanced middleware that dynamically switches between the two setups based on inference load does a bit better, but even so: separate setups average about **23%**, dynamic switching about **26%**, and the best baseline only about **32%**.
+
+### 25.2 Lynx's goals and four-step architecture
+
+- **Goal**: maximize resource utilization, improve inference accuracy through continuous retraining, and still meet **service-level objectives (SLOs)** — achieved by integrating **execution awareness** with **adaptability to incoming data**.
+- The presenter explicitly skips the paper-body-level algorithmic detail and only outlines four steps:
+  1. **Offline profiling**: derives latency- and memory-sensitive coefficients in advance (e.g., the memory-utilization threshold for maximum throughput), feeding the online scheduler.
+  2. **Task estimation**: estimates the utilization and latency a newly arriving task will introduce — computing two variables (a memory-increase term and a response time, R) via a fairly complex algorithm.
+  3. **Hierarchical resource allocation**: a two-level structure — a task level (new task assignment) and a queue level (dynamically adjusting priorities within the global queue).
+  4. **Memory-aware scheduling**: tracks all ongoing tasks and maintains SLOs via a **wait-or-drop policy** that defers execution whenever memory demand exceeds a certain capacity.
+- The result figures reportedly show a significant utilization improvement over the baseline average, but no concrete numbers were given in this abstract-level summary.
+
+## 26. [Day 6] Journal vs. conference — CS publication culture (summarized)
+
+> What follows is a discussion the professor led directly, prefacing it as "this might look outside the scope of a real-time systems lecture, but it ties into Supplement 1 and is still core material." The raw recording, including student Q&A, runs fairly long (roughly 2,000 seconds), but **what's below summarizes only the key facts** — it doesn't reconstruct every exchange.
+
+### 26.1 The basic difference between journals and conferences
+
+- **Journal**: a pure publication venue you can submit to anytime (24/7) — a periodical. An editor finds reviewers and emails them; once 3–4 reviews come in, review proceeds to a decision of accept / major revision / minor revision / reject. The example journal shown typically issues one number per month with 20–30 papers per issue, and traditionally the papers together formed a physical book (mostly online now).
+- **Conference**: a gathering where researchers present in person, characterized by a **single annual submission deadline** (e.g., one venue's deadline this year was around May 26 — "miss that date and there's no chance until next year"). Presented papers get published through **proceedings**, and the **venue rotates every year** (e.g., SOSP is held somewhere different each year).
+
+### 26.2 CS's distinctive conference-centric culture
+
+- In **most engineering fields other than computer science and part of electrical engineering** (e.g., chemical engineering), journals sit at the top and conferences are treated as informal idea-sharing gatherings — the professor checked a random chemical-engineering professor's publication list and found it was entirely journal papers.
+- **Computer science is the opposite**: the top three or so conferences (NeurIPS and ICML in AI, SOSP in systems, etc.) actually rank **above the top journals** — a quirk unique to CS ("I don't really know why it ended up this way"). Still, researchers from Austria, Germany, Italy, and elsewhere in Europe do build records in journals, so journals aren't entirely meaningless.
+
+### 26.3 Finding good venues and papers — rankings, DBLP, and real-time-systems benchmarks
+
+- **CS Rankings** (run out of Wisconsin, not an official/authoritative ranking, more of a personal project) was introduced as a rough reference — illustrated with a researcher who published only about 40 papers total over 15 years, of which 5–10 were truly outstanding, as an example that quality matters more than count. Operating systems itself has become a niche area with declining interest, though Chinese researcher interest in it is currently strong.
+- **DBLP**: a database of CS papers for looking up researchers of interest (other engineering fields have their own equivalent databases).
+- **Top venue in systems**: the "most authoritative and comprehensive" conference in the field (identified as SOSP), which selects only about 40 papers a year — this year, a surge in Chinese submissions pushed that to about 50; the venue rotates America → Europe → Asia every three years (this year in Japan), with English quality noted as best at the American venue.
+- **Real-time-systems benchmark venues**: the field's top conference (identified as RTSS, with roughly a **5%** acceptance rate and a deadline around May 26 this year) was named as the second-most-important venue, alongside its European counterpart **ECRTS**, a closely related embedded-systems conference, and **CPS Week** — all worth knowing.
+- Practical ways to obtain papers: free from the author's personal webpage, or via the IEEE/ACM digital library for a fee (roughly $10–20 per download), usually covered by institutional subscriptions.
+
+### 26.4 The review process — program committees, matching, and double-blind review
+
+- A conference has **chairs**, under whom sits a **program committee (PC)** newly selected each year to match the submission volume (e.g., ~200 submissions → ~50 PC members, each reviewing roughly 16–60 papers). Papers where the reviewer is an author, or a friend/colleague is, are removed from that reviewer's candidate pool first; remaining papers are ranked by preference (based on title/abstract) and assigned via **algorithms drawn from medical-residency matching and stable-matching research**.
+- **Double-blind review**: neither the authors know who the reviewers are, nor do reviewers know who the authors are (only the chairs know, and they must not reveal it) — distinct from **single-blind** review, where reviewers know the authors but not vice versa. PC members can submit their own papers, but must leave the room when their paper is discussed, and **chairs themselves cannot submit at all.**
+- **The scale problem in AI**: venues like AAAI receive around **50,000** submissions, making proper review nearly impossible — even first-year master's students end up as co-reviewers, and some say **review quality has effectively collapsed** at such venues — a comment that policing peer-review quality is itself a research topic.
+- **Two papers with overlapping topics**: no hard rule exists, but if both are judged strong, both can be accepted; if one is clearly better, only that one is — and this kind of overlap is common on hot topics, where multiple groups independently attack the same recognized problem.
+
+### 26.5 Wrap-up and preview of the next session (9/24)
+
+- Takeaways: understand the difference between platform and algorithm, and, in real-time systems, learn to find good papers at good venues such as **RTSS and RTAS** — not all conferences or journals sit at the same level; there's a real hierarchy.
+- **Next-class announcement**: "two days from now (heard on the STT as 'Halloween'), there's no class, and you need to watch the video before the next class (Monday)." ⚠️ **This is almost certainly an STT/translation error** — two days after 9/22 is exactly **September 24**, which matches precisely the announcement already confirmed in section 15: "September 24 has no in-person class due to Chuseok, replaced by a recorded lecture." In other words, "Halloween" appears to actually mean the **Chuseok holiday**, and this recorded lecture is exactly the **2026-09-24 session (Lecture Note 4)** covered in section 27 onward below.
+- The professor then briefly previews Lesson 4 ("modeling") content for 5–10 minutes as a heads-up before the video — since that content is substantively the same as what section 27 onward covers in full (the recorded lecture itself), it isn't given its own subsection here and is folded into the treatment below.
+
+## 27. [Day 7] What is a "model"? — the expressiveness vs. tractability trade-off
+
+> Source: 2026-09-24 recorded lecture video (seventh session; recap project result document `2026-09-24-real-time-systems-1.json`, titled "Lecture Note 4: Modeling Real-Time Systems & Tasks," roughly 43 minutes total). As confirmed in section 26.5, this session is a **recorded video** distributed in place of an in-person class due to the Chuseok holiday, walking directly through the Lesson 4 ("Modeling Real-Time Systems") slide deck. **⚠️ The corresponding slide file (presumably `CAS4155_2026Fall_Lecture_Note04.pdf`) is not kept in `_private/`, so the exact on-screen diagrams and formulas can't be verified — what follows is reconstructed from the narration (audio) alone, and passages that depend on the slide's visual content (exact diagram coordinates, arrows, etc.) are flagged as such.** There is no live Q&A in this video (it's a recording).
+
+### 27.1 The definition and requirements of a model — expressiveness vs. tractability
+
+- **Definition of a model**: a representation of something that does **not** capture all of that thing's attributes — capturing everything would make it not a model but the actual system itself. A model captures **only the attributes relevant to a specific purpose**.
+- **Two requirements**:
+  1. **Expressiveness**: it must sufficiently mimic the real thing — an accurate representation of reality.
+  2. **Tractability**: it must be manageable — must let us obtain a result within bounded time.
+- **The trade-off graph (x-axis: expressiveness, y-axis: complexity)**: very high expressiveness (close to the real system) drives complexity up until analysis becomes essentially impossible; very low expressiveness makes analysis easy but leaves the model so far from reality that analyzing it is meaningless. **A good model sits somewhere in between** — sufficiently expressive and sufficiently tractable.
+- **Summary**: packing too much detail into a model makes it impossible to analyze the whole system's behavior (a tractability failure); omitting too much detail makes the result either overly pessimistic and detached from reality, or simply useless (an expressiveness failure).
+
+### 27.2 The inverted-pendulum modeling example — a physical model and a timing model
+
+- The inverted-pendulum control example from the previous lecture note is revisited as a concrete case of modeling.
+- **The physical-side model**: the pendulum, the force, the angle, and an **outside effect** such as a person touching the pendulum — how to model that outside effect, the angle, and the force is exactly what "modeling the actual thing" means.
+- **The timing-side model**: focusing on the compute portion of the sensing-computation-actuation loop — the maximum time to read the input, the maximum computation time itself, and the maximum time to write the output to a buffer are each modeled, and combined into a model of the overall computation timing.
+- **The purpose of modeling**: the real system is too complex to analyze directly, so an abstracted model is needed to make analysis possible. What a real-time system ultimately cares about is "**are all deadlines always met?**" — if the analyzed timing upper bound doesn't exceed the deadline, the system can be concluded safe in terms of timing. This is why we model.
+
+### 27.3 Three ingredients of a good model — assumptions, variables, metrics
+
+1. **Clearly identify the assumptions** needed to simplify reality — simplifying reality requires assumptions, and relaxing those assumptions recovers the real system. But don't over-simplify.
+2. **Define the variables that characterize the model** — these variables represent the model.
+3. **Define the metrics** for evaluating the system's output and performance.
+- **Tying it to the pendulum example**: abstracting the read-input/compute/write-output times into a single **control task** gives that task's **worst-case execution time (WCET)** as the variable; the typical real-time-system evaluation metric is **whether each job's deadline is met**; and an assumption might be something like "the sum of read-input, compute, and write-output time is less than a specified number."
+
+### 27.4 The big picture of timing analysis — system, OS, and platform models, and feasibility
+
+- Analyzing computation timing requires several layers of model:
+  1. **System model**: from the real system (e.g., the inverted pendulum), build a system model, then define task/application parameters and system requirements to obtain an **application model** (e.g., a periodic real-time task). A typical task-model assumption: tasks execute independently, and each has a worst-case execution time.
+  2. **(Real-time) OS model**: since computation must execute independently, the OS model must also be known — it affects timing.
+  3. **Platform model**: parameters differ by platform — e.g., WCET differs across platforms.
+- **The evaluation metric — feasibility**: given a task set, a system model, an OS model, and a platform model, the question is whether that task set is **schedulable** ("feasible") under that platform and OS. If the answer is yes, the system can actually be implemented and run.
+
+## 28. [Day 7] Task modeling — notation, the ready queue, and preemption
+
+### 28.1 Task definition and basic notation
+
+- **Definition of a task**: a **sequence of instructions** continuously executed by the processor until completion, assuming no other activity. Task $i$ is denoted $\tau_i$ (tau i).
+- **Timing-related notation**:
+  - $a_i$ = **activation time**: the task can only start executing from this point on, if computing resources are available — regardless of the scheduling algorithm/policy, execution can never start before the activation time.
+  - $s_i$ = **start time**: the actual point execution begins (may be later than the activation time).
+  - $f_i$ = **finishing time**.
+  - **Computation time**: the time to compute the task itself, assuming no preemption between start and finish.
+  - $r_i$ = **response time**: the interval between activation time and finishing time.
+
+### 28.2 The ready queue and the scheduler
+
+- In a **concurrent system**, multiple tasks can be activated at once (e.g., the sense that multiple apps run "concurrently" in Windows), but only one task is actually **running** at any given time.
+- An active task not currently running is in the **ready** state, held in a **ready queue** managed by the **scheduler**.
+- The scheduler assigns one of the ready queue's active tasks to the processor and decides how many tasks to run — the priority-based assignment from the previous lecture note (task 1 prioritized over tasks 2 and 3) is one example of a scheduler. This concept is assumed already covered in the Operating Systems course.
+- Task flow: activation → enters the ready queue → (once the compute unit is free) dispatched → running → terminated. Which task gets dispatched, and when, is entirely up to the scheduler.
+
+### 28.3 Preemption — enhancing concurrency, its trade-offs, and preemptive / non-preemptive / limited-preemption modes
+
+- **Definition of preemption**: a mechanism that suspends a running task's execution in favor of a more important one — the suspended task returns to the ready queue.
+- **Why preemption is needed**: it enhances concurrency and reduces the response time of more important tasks — without preemption, if task 1's execution runs as long as 10 minutes, every other task would have to wait at least 10 minutes. Preemption can, however, be disabled completely or temporarily to preserve the consistency of certain critical operations.
+- **Three modes, from extreme to intermediate**:
+  1. **Preemptive**: a higher-priority task always preempts whatever lower-priority task is currently running.
+  2. **Non-preemptive**: for any reason, no job/task can ever preempt another job.
+  3. **Limited preemption**: an intermediate form where preemption is allowed only in certain situations.
+
+## 29. [Day 7] The formal definition of a schedule, and the task-state diagram
+
+### 29.1 The formal definition of a schedule — a function from time slots to a task index
+
+- **Intuitive definition**: run task 1 from T1 to T2, task 2 from T2 to T3, task 3 from T3 to T4.
+- **Formal definition**: given a task set $\tau=\{\tau_1,\ldots,\tau_n\}$ ($n$ tasks), a schedule is a function that (assuming discrete time) assigns an integer $k$ to each time slot $[t,t+1)$ — $k=0$ means the processor is idle in that slot; $k>0$ (e.g., $k=3$) means task $k$ is executed in that slot. Under a uniprocessor assumption, only one task executes per slot.
+- This lets an entire schedule be written as a sequence like 0, 3, 2, 1, ... — each such interval is called a **time slice**, and a **context switch** occurs at every point (e.g., $t_1, t_2, t_3, t_4$) where the value changes.
+
+### 29.2 A preemptive-schedule example (reusing the task set from the previous lecture note)
+
+- Priorities are the same as in the previous lecture note — task 1 highest, task 3 lowest.
+- **Time 0**: the only active job is task 3 → task 3 runs until time 4 ($k=3$).
+- **Time 4**: task 2 is released and has higher priority than task 3, so — since this is a preemptive schedule — task 3 is **preempted** → task 2 runs until time 6 ($k=2$).
+- **Time 6**: task 1 is released (highest priority), preempting task 2 in turn → task 1 runs until time 8 ($k=1$).
+- **Time 8**: task 1 finishes. Of the two preempted tasks (2 and 3), task 2 has the higher priority and **resumes** → runs until time 11, then finishes.
+- **Time 11**: the only remaining active job, task 3, resumes → finishes at time 13. No active job remains after that.
+- In this example, times 4, 6, and 8 are points of **preemption**, and time 11 is also a **context switch** point (not a preemption, but a transition after natural completion).
+
+### 29.3 Mapping the task-state diagram onto the schedule example
+
+- **State diagram (identical to what's already covered in the OS course)**: new → (admitted) → ready → (once selected) running → (on completion) terminated. If interrupted while running, it goes back to ready; if it waits for I/O or an event, it goes to waiting and then back to ready — the cycle repeats.
+- **Mapped onto the 29.2 example**: task 3 is running from time 0–4. Preempted at time 4, task 3 goes to ready while task 2 runs from 4–6. At time 6, task 1 starts running, while task 2 stays ready until it resumes at time 8. Task 2 resumes to running, then goes terminated on completion. Task 3 resumes around time 11, runs, then goes terminated on completion.
+
+## 30. [Day 7] The definition of a real-time task — feasibility, jobs, and activation modes
+
+### 30.1 Real-time task, feasibility, and response time / deadline, revisited
+
+- **What characterizes a real-time task**: a **timing constraint** on its response time or deadline — the task must finish execution within a specified time after being released.
+- **Definition of feasible / schedulable**: a real-time task $\tau_i$ is called feasible/schedulable if it's guaranteed to finish within its deadline — equivalently, **finishing time ≤ absolute deadline**, or **response time ≤ relative deadline**. The relative deadline is the interval between the arrival time and the absolute deadline (the same concept already covered in the previous lecture note).
+
+### 30.2 The formal definition of a job
+
+- **Definition**: a task run multiple times on different input data generates a sequence of instances called **jobs** — a concept widely used in periodic and sporadic task models. Task $i$'s first job, second job, etc. are denoted $J_{i,1}, J_{i,2}, \ldots$
+
+### 30.3 Activation modes — time-driven vs. event-driven
+
+- **Time-driven**: widely used for periodic tasks — the OS automatically activates the task at predefined time instants. As with the inverted pendulum's sensing-computation-actuation loop, or the train example's obstacle-detection loop, **periodic (= time-driven) activation is the natural mode for a controller.**
+- **Event-driven**: called an **aperiodic task** — activated only when an event (an interrupt, or an explicit system call from another task) occurs.
+
+## 31. [Day 7] The periodic, aperiodic, and sporadic task models, and their parameters
+
+### 31.1 Periodic-task notation $(T_i, C_i, D_i)$ and utilization
+
+- **Periodic task $\tau_i$**: generates an infinite sequence of jobs — the same code repeatedly executed on different data. Notated $\tau_i = (T_i, C_i, D_i)$ (or abbreviated $\tau_i=(T_i,C_i)$ when the relative deadline $D_i$ equals the period $T_i$ and is omitted).
+  - $T_i$ = period, $C_i$ = execution/computation time, $D_i$ = relative deadline (defaults to $T_i$ when omitted).
+- **Utilization / load**: $C_i/T_i$ — the same concept covered in the previous lecture note. E.g., a value of 25% means the task consumes 25% of the computing resource.
+
+### 31.2 The $k$-th job's arrival time and absolute deadline
+
+- Given the first job's arrival time, **the $k$-th job's arrival time = first job's arrival time + $(k-1)\cdot T_i$** (e.g., $k=2$ adds one period, $k=11$ adds ten periods).
+- **The $k$-th job's absolute deadline = that job's arrival time + the relative deadline $D_i$**.
+
+### 31.3 Aperiodic vs. sporadic tasks — comparing the inequalities and the generalization relationship
+
+- **Aperiodic task**: the only requirement is that "the next job's arrival time is later than the previous job's" — no constraint beyond ordering.
+- **Sporadic task**: "next job's arrival time ≥ previous job's arrival time + the period ($T_i$)" — consecutive jobs must be separated by **at least one period**.
+- **Generalization relationship**: a periodic task requires the inter-arrival gap to equal the period exactly ($=$), while a sporadic task only requires it to be at least that large ($\geq$) — so **a sporadic task is a generalization of the corresponding periodic task.** In this context, a sporadic task's period is called its **minimum inter-arrival time**.
+
+## 32. [Day 7] Measuring worst-case execution time (WCET) — analysis-based vs. measurement-based
+
+### 32.1 Why WCET is needed
+
+- **Definition of execution time ($C_i$)**: the time the processor spends executing task $i$, not counting suspension time (i.e., summing only the actual "busy" intervals, excluding gaps from preemption, etc.).
+- To meet the deadline under every possible case, the **worst-case execution time (WCET)** must be estimated — without it, essentially no timing guarantee is possible.
+
+### 32.2 Analysis-based measurement and a worked example — a traffic-light crossroad
+
+- **Analysis-based**: make a set of assumptions and estimate WCET from them — e.g., for code made of for/if/else branches, compute each branch's execution time, take the maximum, and multiply by the worst-case iteration count to get WCET (a simplified example).
+- **Worked example — a car crossing intersections**: assume knowledge of the road map, speed limit, and traffic-light timing, plus assumptions that "the car doesn't break down, there's no accident or jam, nothing but a red light ever stops the car, and it always drives at the (constant) speed limit."
+  - $T_R$ = time spent on the road = distance ÷ speed.
+  - $T_C$ = time spent waiting at intersections — e.g., if the light takes 10 seconds to go red→green and there are 4 intersections, the worst-case total wait (assuming the light always just turned red on arrival) is $4\times10=40$ seconds.
+  - **Worst-case arrival time (WCET) = $T_R + T_C$** — ignoring acceleration/deceleration time.
+
+### 32.3 Measurement-based measurement and the execution-time distribution
+
+- **Measurement-based**: actually run the task many times over varied inputs, collect execution-time statistics, and take the maximum.
+- The distribution of occurrence count (y-axis) vs. time (x-axis) is typically **long-tailed** — from it one can identify the best observed, average observed, and worst observed execution times.
+- **Key caveat**: the true WCET can be **larger** than the worst observed execution time, since observations are only a sample of possible inputs, and testing every possible input/situation is generally impossible — so the worst observed execution time is normally strictly less than the actual WCET.
+- **What each method must account for**: analysis-based methods must combine the code's longest path, a bound on loop iteration counts, a bound on cache-miss counts, and the execution time of each instruction along the longest path. Measurement-based methods must run enough repetitions over varied input data and collect the resulting distribution.
+
+### 32.4 Preview of the exercise — summarizing the parameters and the offline/online distinction
+
+- The closing question posed for discussion in the offline class: summarize the **notation and meaning** of the real-time task parameters $C_i, T_i, D_i, U_i, A_i, S_i, F_i, R_i$, and work out which of them are knowable **offline (at design time)** versus only **online (at runtime)**.
