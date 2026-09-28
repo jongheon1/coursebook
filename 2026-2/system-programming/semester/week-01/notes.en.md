@@ -454,3 +454,95 @@ Task switching happens in four cases:
   - **Final order: B → C → A** (total execution time 2+1+3=6ms; all three tasks finish within their own deadlines).
 - **EDF's limitations**: it requires **precise deadline information** for every task, and since the scheduler must compare deadlines whenever a new task arrives, it can suffer from **high context-switching overhead** — a new task with an earlier deadline than the currently running one always triggers a context switch. This is why EDF is mainly used in **RTOSes (real-time operating systems)**, with general-purpose schedulers not adopting it directly — the only stated connection is that **EEVDF borrows the deadline concept from it**.
 - The lecture ended here, with an explicit note that "**we'll continue with EEVDF next time**" — this note does not speculate about EEVDF's detailed mechanics (lag/eligibility computation, etc.).
+
+---
+
+## Day 6 (2026-09-23) — Deep-Dive Review of CFS/EEVDF and sched_ext
+
+> Source: 2026-09-23 lecture-audio STT (from the `recap` project's result file, `2026-09-23-system-programming-1.json`, titled "CFS/EEVDF Review & Scheduling Classes (incl. sched_ext)", 44 paragraphs, ~44 minutes). This was a regular class session held **the day before Chuseok holiday began**. It covers the EEVDF mechanics (lag/eligibility/virtual deadline) that Day 5 had deferred. The first part quickly reviews CFS and re-establishes the motivation for EEVDF; the middle part works through lag, eligibility, and virtual deadline in depth with a worked example; the back half wraps up with a full history of the scheduler's evolution, Linux's modular scheduling-class concept, and the newest feature, `sched_ext`.
+
+### 55. Announcements — the Chuseok Makeup-Class Plan and Next Week's Assignment
+
+- This session was held the day before Chuseok holiday. Friday's class needs a makeup session per university policy, and between the two options (an in-person makeup class vs. a recorded video class), the professor chose the latter — reasoning: "I don't want to give you a lot of work over the holiday." His plan is to record videos reviewing and summarizing the process-management/scheduling material covered so far, which he says will also help with midterm prep.
+- The plan: upload the videos by tomorrow (9/24), to be watched before next Wednesday. Per the rule that "a 30-minute video can replace one hour of class," there will be two 30-minute videos.
+- He's considering giving an assignment related to CFS or EEVDF sometime next week — not yet decided, stated as "thinking about it."
+
+### 56. CFS Review — Weight, Vruntime, and the 1.25x Rule
+
+- Restating CFS's core: it's all about fairness — the key idea is fixing the O(1) scheduler's unfairness problem (Day 5 §45). Two key concepts: (1) **weight** — time slices are determined based on weight. (2) **virtual runtime (vruntime)** — indicates how long a task has run and how much longer it should run. Reconfirmed: **larger weight means vruntime increases more slowly** — because higher weight means the task is more important, so the scheduler should give it more CPU share and opportunities (consistent in direction with Day 5 §49's "smaller weight → faster-growing vruntime," just phrased from the opposite side).
+- **The 1.25x rule**: a one-level nice-value difference is designed to always mean a **1.25:1 weight ratio** (≈25% increase) — this is the core idea behind CFS making "each step always have a consistent effect" (reconfirming the fix to the unfair priority effect from Day 5 §48). Two tasks with equal priority (nice) get a 1:1 weight ratio and thus equal time slices. Assuming a total time slice of 10ms, a nice difference of 1 gives a 1.25:1 weight ratio, and the two tasks split the time slice according to that ratio. For a difference of 5, or generally n, the weight ratio is always **1.25 to the power of n**. The baseline is reconfirmed: nice=0 maps to weight=1024.
+- **Data structures, reconfirmed**: the scheduler uses a red-black tree (RB tree) to pick the next task — insertion and lookup are always O(log n), more efficient than list/queue-based management. The scheduler keeps a pointer to the RB tree's **leftmost node**, making next-task selection very fast. Inserting a new task is also O(log n). Tasks are sorted by vruntime.
+- **Run-queue structure, reconfirmed**: each CPU has its own run queue, made up of real-time-related structures (a doubly-linked-list family) plus a single RB tree for normal tasks.
+
+### 57. CFS's Limitation, Reconfirmed → the Goal of EEVDF
+
+- CFS focuses purely on fairness, and fairness doesn't mean low latency — that's the problem. Splitting tasks into interactive and CPU-bound (batch), latency matters more for interactive tasks, but CFS treats the two the same "fairly," which can cause problems for interactive tasks — this is why **EEVDF** was adopted in this version of Linux.
+- A very simplified comparison (the professor's own caveat: "not entirely accurate, just meant to convey the concept"): because CFS's RB tree is sorted by vruntime and everything revolves around vruntime, an interactive task may have to wait a long time until it becomes favorable in vruntime terms, leading to higher latency. What EEVDF wants to do is give interactive tasks lower latency through deadline-aware scheduling.
+- EEVDF shares the same design philosophy as EDF from real-time systems (the task with the earliest deadline gets the highest priority, Day 5 §54). **EEVDF's goal is to consider both latency and fairness at once.**
+
+### 58. EEVDF's Core Concepts — Lag and Eligibility (an A/B/C Worked Example)
+
+- To achieve this goal, EEVDF introduces two key concepts: **lag** and **eligibility**.
+- **Definition of lag**: the difference between the ideal CPU time a task should have received and the CPU time it actually received = (the average runtime across all tasks) − (that task's own runtime). If a task's runtime is larger than the average, its lag goes below zero (negative); if smaller, its lag goes above zero (positive).
+- **Eligibility rule**: if lag is below zero, the task is not eligible — it has already been allocated too much CPU time. If lag is zero or above, the task is eligible — it hasn't yet received its fair share of CPU time.
+- **Worked example**: assume three tasks A, B, and C have the same nice value (same weight), and their time slices are all 30ms.
+  1. Initial state: all three have lag=0 → by the eligibility rule, all three are eligible.
+  2. The scheduler picks **A** first (arbitrarily, since there's no priority difference among them), and A runs its full 30ms time slice. Average runtime = (30+0+0)/3 = **10ms**. Based on this: **lag_A = 10−30 = −20** (not eligible), **lag_B = lag_C = 10−0 = +10** (eligible, since they didn't run on the CPU).
+  3. Next, the scheduler picks **B** (again arbitrarily, since there's no priority difference), and B also runs its 30ms time slice. Average runtime = (30+30)/3 = **20ms**. Based on this, **both A's and B's lag become −10** — neither is eligible — and **C is the only task left that's eligible**, so C is the one selected next.
+  - (Note: since this example assumes equal weight, technically vruntime should be used, but the professor pointed out directly that runtime and vruntime are essentially the same when weight is equal.)
+- This example captures the core idea of lag and eligibility, and **EEVDF operates based on this concept.**
+
+### 59. Virtual Deadline and EEVDF's Selection Logic
+
+- Instead of vruntime, EEVDF maintains a **virtual deadline** for every task. CFS's RB tree is sorted by vruntime, whereas EEVDF also manages tasks with an RB tree but sorts it by **virtual deadline** — that's the difference.
+- Virtual deadline was described (in the professor's words) as "pretty similar to how vruntime is computed in current implementations," calculated from weight and time slice as inputs — the exact equation itself was on the slide, but wasn't worked through numerically in the lecture. **This note does not speculate about the precise formula.**
+- **EEVDF is still "settling"** — i.e., under active development, so implementation details can change, explicitly stated (the professor said he just wanted to convey the key philosophy and design choices). He recommended looking directly at the actual kernel code if interested, and especially when doing the assignment.
+- **The role of time slice differs from CFS**: in CFS, weight determines the time slice, but **in EEVDF, weight does not determine the time slice** — normal tasks' time slices are all the same by default (though he noted developers or user programs can specify their own time slice if they want). Weight still determines **long-term CPU share** — if two tasks have the same weight, their CPU share eventually converges to 50:50.
+- **Example of controlling latency via time slice**: even if task A is set to a 10ms slice and task B to a 100ms slice, as long as their weights are equal, the long-term CPU share stays 50:50. The difference is that when B gets a chance to run, it runs longer (100ms) — because it runs longer, its deadline value grows larger, so its next deadline is also larger, meaning it waits longer before its next opportunity. Conversely, **a shorter time slice gives an earlier virtual deadline** — a latency-sensitive task can request a shorter slice to get scheduled sooner, without increasing its long-term CPU share. This is the key mechanism by which EEVDF controls latency while preserving fairness.
+- **Distinguishing it from SCHED_DEADLINE (explicitly stressed by the professor)**: EEVDF also uses a "deadline" concept, but it's **a different policy from SCHED_DEADLINE** — SCHED_DEADLINE is an EDF-based policy **for real-time tasks**, while EEVDF is **for normal tasks**. The virtual deadline is also different from a general real-time deadline scheduler in that it's not an actual wall-clock deadline but purely a value used for sorting, with no hard-deadline guarantee.
+- **Steps of the selection function**: (1) among the runnable tasks in the run queue, filter down to only the eligible ones by checking their lag values (tasks that ran more than average are excluded — e.g., out of A, B, C, D, two tasks that ran more than average get excluded, leaving the rest as candidates). (2) among the remaining eligible candidates, pick the task with the shortest virtual deadline — this is how EEVDF's selection function works. (Note: in the actual kernel source, this selection function is named `pick_eevdf()`, though the lecture itself never named the function.)
+
+### 60. EEVDF's Weakness — Selection Is O(n) (vs. CFS)
+
+- An aside the professor added on the spot, noting it "wasn't written down on the slide": **EEVDF also has a bit of a weakness** — for CFS, task selection is **O(1)** (just pointing at the RB tree's leftmost node), but **for EEVDF, in the current implementation, this becomes O(n)** because of the issue below.
+- Why: the leftmost-node pointer that works for CFS can be less useful in EEVDF, because that leftmost node (the one with the earliest virtual deadline) **might not be eligible**. If it isn't, the scheduler has to scan through tasks one by one until it finds an eligible one — which is why the professor directly assessed that "the RB tree isn't as meaningful in EEVDF" (compared to CFS). Still, as far as he understands, the kernel continues to maintain this RB tree structure, and only when the leftmost node isn't eligible does the scheduler scan through all eligible tasks to pick one.
+- He mentioned that someone in the community might propose a new data structure to address this — implying no such alternative has settled in yet.
+
+### 61. Scheduler History, Summarized — O(n) → O(1) → CFS (2007) → EEVDF (2023)
+
+- The **original O(n) scheduler**, not covered in this course: described as very simple (naive) but very inefficient — reconfirming that the course instead started from O(1).
+- **The O(1) scheduler**: more efficient than O(n), and some of its ideas/design choices are still present in the current Linux kernel — e.g., real-time tasks (SCHED_FIFO/SCHED_RR) are still managed via a doubly linked list today. But it needed too many heuristics to distinguish interactive from batch tasks, and having so many heuristics made the design/implementation inelegant — the core problem was **fairness**, and because that was such a big problem, **CFS was adopted in 2007**.
+- **CFS**: based on weight, time slice, and vruntime, it was able to deliver genuinely fair scheduling. But it also had a problem: poor latency for interactive tasks.
+- **EEVDF**: the new scheduler **adopted into Linux in 2023** to address this weakness — its key idea is **virtual deadline + eligibility** (eligibility computed from the lag value). EEVDF is still settling, with active development ongoing — he directly encouraged students: "if you have good ideas for this scheduler, go to the open-source community and propose your design; maybe you can change the history of the Linux scheduler."
+
+### 62. Scheduling Classes — the Modular Structure (RT Class / Fair Class / Idle Class)
+
+- Linux has multiple **scheduling classes**, a modular approach that lets different scheduling policies be implemented independently.
+- Recapping the policies covered so far: **SCHED_FIFO** and **SCHED_RR** (introduced early in the kernel's history and still used today, for real-time tasks), and **SCHED_DEADLINE** (different from EEVDF but also for real-time tasks).
+- For normal tasks, the scheduler is based on CFS or EEVDF. Linux supports multiple scheduling classes — for example, an **RT class**, a **fair class**, and an **idle class**. (The professor explicitly hedged: "I'm not sure the class name is exactly this" — he noted these names are based on the source code from the CFS-era version of Linux.)
+- The core message: Linux systems can have very different kinds of tasks and workloads, which is exactly why Linux provides this modular approach to scheduling policies.
+
+### 63. sched_ext — the eBPF-Based Extensible Scheduler Class
+
+- Beyond these existing policies, modern Linux also supports an **extensible scheduler class, `sched_ext`** — meaning you can add your own scheduler to the Linux kernel without recompiling or rebuilding the entire kernel, a very new feature. As of the professor's reference point, the latest LTS (long-term support) Linux kernel is 6.18, with 6.12 just before it — so this is quite a recent addition.
+- **How it works**: sched_ext is a scheduling class whose behavior can be defined via **eBPF** — through this, you can insert your own scheduling policy into the Linux kernel. It allows custom scheduling policies without modifying the kernel: it exposes scheduling operations through eBPF, supports custom scheduling logic, and the custom policy can be **dynamically enabled and disabled**.
+- **Motivation**: different workloads may require different scheduling policies — for example, there are now many AI-serving systems like ChatGPT, and you could also think of physical AI things like robots, both of which are very different from traditional computers like a laptop or desktop. To support this kind of diversity in computing devices with very different workload characteristics, Linux decided to open up this feature to more people. He also mentioned the benefit of rapid experimentation, implementation, and workload-specific optimization, since testing a new scheduling policy no longer requires modifying or rebuilding the kernel.
+- The professor wrapped up by saying, half-joking, "if you want, you can design your own scheduler and easily test it with sched_ext — I could give you this as an assignment... or maybe not, okay, I was just joking," and closed the class with holiday wishes for Chuseok.
+
+---
+
+## Day 7 (2026-09-25) — Makeup Videos: L01 & L02–03 Review
+
+> Source: two makeup videos (posted on LearnUs) that replaced an in-person class due to Chuseok holiday, exactly as announced in Day 6. Video 1, `2026-09-25-system-programming-1.json` (titled "Makeup Video: L01 Review — Kernel Execution, Processes & Threads," 34 paragraphs, ~30 minutes/1778 seconds); Video 2, `2026-09-25-system-programming-2.json` (titled "Makeup Video: L02-03 Review — O(1), CFS & EEVDF Schedulers," 49 paragraphs, ~34 minutes/2029 seconds). **Both videos are pure review** — they summarize and re-explain material already covered in Days 1–6, with no new slide content added, so this note does not re-explain concepts already documented and instead pulls out **only what was freshly phrased or emphasized, plus anything exam-related.**
+
+### 64. Video Structure — No New Slide Content
+
+- **Video 1 (L01 review)**: how the kernel executes kernel code (process-based OS vs. execution-within-user-process), dual-mode operation and the three mode-switch events, the definition/images/context of a process, the motivation for threads and the sharing model, process states, task_struct, process-list management (linked list + hash table), and wait queues — walking back through material already covered in Days 2, 3, and 4, in order. **No new facts or examples** (everything matches the Day 2–4 notes as already recorded).
+- **Video 2 (L02–03 review)**: the four process-switching events, hardware context/thread_struct, the kernel implementation of threads (lightweight process, less-lightweight process/COW/vfork), kernel threads (swapper/init), the two stages of process destruction, and the full history of the O(1)/CFS/EEVDF schedulers — a condensed re-summary of material already covered in Days 3, 4, 5, and 6. **Again, no new facts.**
+- Both videos repeatedly skip over explanations with remarks like "we already covered this, so you can understand it by going over the slides yourself" (e.g., for the detailed steps of the `switch_to` macro).
+
+### 65. Exam Signal — "What Got Skipped Could Still Be on the Midterm"
+
+- In Video 2, while skipping the explanation of Linux's scheduling principles (the slide summarizing the cases that require task scheduling), the professor explicitly said: "This slide is also very important, so I hope you pay attention to it, but I'll skip the explanation."
+- Similarly, while summarizing the run-queue data structures and O(1)'s scheduling policies, he said again: "They're all important, so I hope you study them for the exam, but due to time limits, I'll skip the detailed explanation here."
+- **The explicit exam warning at the end of Video 2 (the most important signal)**: "Just so you know, I skipped some materials in this video. But that doesn't mean the materials I skipped won't be on the midterm exam — though it's likely to be rare." He followed this with: "I think most of what I covered in this video is more important than what I didn't cover. But still, I want you to study the points I didn't explain in this video." In other words: **what was actually explained in the video takes priority, but the skipped slide details are explicitly not fully ruled out from the midterm scope either** — a warning that should be read at face value.

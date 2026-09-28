@@ -592,3 +592,137 @@ Mechanism, illustrated with 4 GPUs and the gradient flattened into 4 chunks A/B/
 - **The remaining limitation**: a slide states that "although data parallelism is a good solution for dealing with large-scale datasets, it can still cause an issue" — the lecture moved past this sentence mid-way and went straight into the next preview. What that limitation actually is becomes clear in the closing remark of §60: **data parallelism, by design, replicates the entire model as-is on every GPU**, so when **the model itself is very large**, both the parameter-memory problem and the activation-memory problem (since activation memory also depends on model size) remain fully in place — data parallelism alone **cannot solve the large-scale-model problem.**
 - **Next week's preview**: **model parallelism** strategies, which intentionally split the model across multiple GPUs.
 - The lecture closed by inviting questions. *(The audio's final sentence trails off mid-way — something like "and if you didn't check my…" — and is unclear; recorded only up to this point, without guessing at the rest.)*
+
+## Day 7 (2026-09-23) — Pipeline Parallelism: Naive Approach & GPipe
+
+> Source: lecture-audio dialogue transcript from 2026-09-23 (Wed) (`2026-09-23-distributed-learning-and-inference-1.json`, t=0–2939, per-paragraph {t, en, ko}). This note is based solely on this dialogue transcript — unlike earlier Days, the original slide deck (page numbers, etc.) was not separately checked, so no "(p.NN)" style page citations are attached here. **There is a holiday on Friday 9/25, so there is no class that day, and pipeline parallelism continues next week** — this session covers only the basic concept of pipeline parallelism, its naive version (version 0), and GPipe.
+
+### 61. Recap: Why Data Parallelism Doesn't Reduce Parameter Memory Enough, and This Week's Motivation
+
+- Class opens by restating the overall structure of this semester's distributed-training segment: beyond data parallelism, covered last week, the plan is to cover pipeline parallelism, tensor parallelism, and expert parallelism as well — today covers the concept of pipeline parallelism.
+- **Recap of last week (Day 5, 6)**: the idea of data parallelism was to split the dataset across multiple machines while sharing the same model across all of them. For example, if you target a full-batch gradient-descent update, activation memory actually increases (compared to targeting the same target mini-batch size); but if you use data parallelism to target that same mini-batch size (rather than full-batch), activation memory is reduced.
+- **Parameter memory recap**: compared to fully centralized training, introducing a central parameter server gives data parallelism some advantage. For plain SGD there was actually no difference. But with more complex optimizers like SGD momentum or Adam, keeping the optimizer state on the server side instead of on each machine slightly reduces memory (§48) — so per-GPU activation memory and per-GPU parameter memory could be kept at fixed values.
+- Data parallelism can be integrated with various optimizers like SGD momentum and Adam (§46–47), and it still works even without a central parameter server — in a fully decentralized setting where each machine only communicates with its neighbors (§52–54) — and even there it can be combined with various optimizers. That was the concept of fully decentralized data parallelism and ZeRO: ZeRO's idea was to partition the optimizer state, the gradient, or the parameters (progressively, one or more of them) to further reduce parameter memory in fully decentralized data parallelism — this was the answer to "can parameter memory be reduced even in a fully decentralized setting?" (§55–59).
+- Looking again at **the one-page summary** of last week's content, it's easy to see that data parallelism doesn't really reduce parameter memory all that much. There is a slight reduction — e.g. (per §48's table) $3M \to 2M$, or $4M \to 2M$ — but this efficiency doesn't scale well with model size. If the model size is very large, simply cutting parameter memory roughly in half isn't much help.
+- **This week's motivation**: so it's natural to think about splitting the model itself, not just the data. Since data parallelism doesn't meaningfully reduce parameter memory, if the model is too large, data parallelism alone cannot fundamentally solve the memory problem — how to solve this is exactly the key question today and next week aim to answer.
+- **Revisiting the DeepSeek-V3 technical report figure** (first cited in Day 5 §33): last week's lecture notes highlighted the ZeRO-1 data parallelism part of this figure. But looking at what comes before it, DeepSeek-V3 is shown applying **16-way pipeline parallelism**, then **64-way expert parallelism**, then **ZeRO-1 data parallelism** — i.e., combining these different parallelism techniques together to achieve efficient training.
+
+### 62. Today's Scope and Goal
+
+- Last week covered data parallelism; today is about pipeline parallelism. "What does pipeline mean" will become naturally clear from the following slides — that's stated as today's goal.
+- Because there's a holiday on Friday 9/25, pipeline parallelism continues next week too. Today's lecture goal: **split the model so as to reduce parameter memory and activation memory at the same time.** There are several model-parallelism methods, and pipeline parallelism is one of them — this week focuses on pipeline parallelism.
+- **Overall roadmap**: first, the very basic concept and one solid approach (the naive version and GPipe) will be covered, and then four well-known approaches published at top-tier conferences. Once the basic concept and GPipe are understood, though, that naturally provides the knowledge needed to understand what comes later.
+
+### 63. The Basic Concept of Pipeline (Model) Parallelism — Splitting the Model by Layers
+
+- The basic concept is very simple: given a model, the idea is to split it into multiple chunks. Specifically, **the model is split by layers.**
+- Each chunk is then allocated to a GPU — that's the whole idea. One could also imagine splitting the network **within** a layer, but pipeline parallelism does not do that — tensor parallelism does something along those lines, but there's no need to think about tensor parallelism at this point.
+- So instead of doing anything inside a layer, whole layers are simply copied and split as-is. And **a GPU doesn't necessarily need exactly one layer**: for example, with 30 layers and only 10 GPUs, each GPU can be allocated three layers; with only 3 GPUs, each can be allocated 10 — this is just one example, and a GPU doesn't need to hold exactly one layer.
+- Naturally, you can expect parameter memory to shrink a lot: GPU 0 is now responsible for training only its allocated layer, so it only needs to store that layer, only needs to consider that layer's gradient, and only needs to consider the optimizer state corresponding to that layer.
+
+### 64. Naive Pipeline (Version 0) — Sequential Forward-then-Backward Execution
+
+- **Question**: once the model is split this way, can each part be trained independently? In data parallelism, every machine held a copy of the model and the only difference was the input data, so all machines could start training at the same time, independently compute gradients, and transmit them to the server.
+- **The answer is a clear "no"**: for example, a given GPU can't do anything before receiving something from the earlier layer. If that GPU holds the last layer, it has to compute the loss and then do back propagation, but it can't even do forward propagation before receiving something from the earlier layers — the GPUs are very strongly correlated with each other.
+- **Execution order**: the GPU that always starts forward propagation first is the one holding the data (e.g., GPU 0). Once GPU 0 starts forward propagation, it passes the signal to the next GPU; once GPU 1 finishes, it passes the signal onward again — and so on. (A larger example was also mentioned in class: GPU 8 has to wait until GPU 7's forward propagation finishes before it can start its own backward propagation, and meanwhile GPU 1 has to wait until the backward-propagation signal from GPU 2 arrives.)
+- **Notation and figure**: there is always one mini-batch used to update the model; given that mini-batch, forward propagation is done sequentially, the loss is computed, and then backward propagation is done sequentially. $F_i$ denotes forward propagation at GPU $i$, and $B_i$ denotes backward propagation at GPU $i$ (given a particular mini-batch).
+- Converting this into a time-step figure: at the first time step, GPU 0 does forward propagation; once that finishes, GPU 1 starts its forward propagation; once that finishes, GPU 2 does forward propagation at the next time step, and so on. Backward propagation can only start once the forward propagation for that mini-batch **completes at the last GPU** — once forward finishes there, that GPU's backward propagation starts, and once that finishes, the previous GPU's backward propagation starts, with gradient computation finally completing when backward propagation finishes at the first GPU (i.e., training for that mini-batch is done). An update step follows after that.
+- **Concrete 4-GPU example** (used directly in class): GPU 0–3, in the order $F_0 \to F_1 \to F_2 \to F_3 \to B_3 \to B_2 \to B_1 \to B_0$, with exactly one GPU active at each time step.
+
+  | Time step | GPU0 | GPU1 | GPU2 | GPU3 | # active GPUs |
+  |---|---|---|---|---|---|
+  | $t_0$ | $F_0$ | | | | 1/4 (25%) |
+  | $t_1$ | | $F_1$ | | | 1/4 (25%) |
+  | $t_2$ | | | $F_2$ | | 1/4 (25%) |
+  | $t_3$ | | | | $F_3$ | 1/4 (25%) |
+  | $t_4$ | | | | $B_3$ | 1/4 (25%) |
+  | $t_5$ | | | $B_2$ | | 1/4 (25%) |
+  | $t_6$ | | $B_1$ | | | 1/4 (25%) |
+  | $t_7$ | $B_0$ | | | | 1/4 (25%) |
+
+- In this example, only one GPU performs computation at each time step while the others wait for the result, and **GPU utilization is exactly 25%** — easy to see by comparing the colored region against the white region: at every time step only one of the four GPUs is actually working, so utilization is 25% either way.
+
+### 65. The Real Memory Advantages of Naive Pipeline (1) — Parameter Memory $M_i$
+
+- Looking at the update step: each GPU is responsible for training a specific part of the model. At each mini-batch iteration $t$, the model updates $W_t$, where $W_t^0$ is allocated to GPU 0, $W_t^1$ to GPU 1, and so on. After running backward propagation, each machine $i$ obtains its own corresponding gradient — this gradient's dimension is much smaller than the full model size, since it only corresponds to the part that machine is responsible for.
+- Once these gradients are obtained, each machine can do gradient descent in this form. If you want a more complex optimizer, you can apply SGD with momentum or another optimizer on each GPU the same way (with index $i$ = GPU index) — every optimizer covered so far can be run this way on each GPU.
+- **A table worth noting down**: per-GPU parameter memory in centralized training was $2M$ for SGD, $3M$ for SGD with momentum, and $4M$ for Adam (where $M$ is the original model size). In this naive pipeline (version 0), these become $2M_i$, $3M_i$, and $4M_i$ respectively — where $M_i$ is the model size allocated to GPU $i$.
+- **Why this makes sense**: GPU $i$ now only needs to train the $M_i$ portion, so it only needs to store the gradient and optimizer state for that portion of the model. So even this very naive approach reduces parameter memory substantially — as you keep increasing the number of GPUs, $M_i$ becomes much smaller than $M$.
+
+### 66. The Real Memory Advantages of Naive Pipeline (2) — Activation Memory $\alpha_i$, Contrasted with Data Parallelism
+
+- In centralized training on a single machine, all intermediate activations had to be stored to compute the gradient. But now, since each GPU $i$ trains only a specific part of the model, it only needs to store **that layer's input activations** — letting $\alpha_i$ be the total activation size of the model portion allocated to GPU $i$, this naive pipeline approach reduces activation memory substantially.
+- **Concrete example** (used directly in class): for instance, GPU 6 only needs to store $A_5$, the activation for its own layer, and doesn't need to store $A_4, A_3, A_2, A_1$. Likewise, GPU 5 doesn't need $A_5$ or $A_3$ — it only needs $A_4$. So per-GPU activation memory shrinks too.
+- **The key contrast with data parallelism**: this approach doesn't directly shrink the batch size — it **reduces the activation size by splitting the model**, which is different from data parallelism. In data parallelism, the model is replicated as-is on every GPU, so $\alpha$ itself stays the same; instead, (assuming a fixed total batch size) activation memory was reduced **by shrinking the per-GPU batch size.** Here, by contrast, the batch size stays the same, and **the number of activations each GPU has to store is directly reduced.** So even this naive approach reduces activation memory, simply because each device trains only a specific part of the model. (See the Week 2 lecture notes for what generates activation memory during backpropagation.)
+
+### 67. The Limitation of Naive Pipeline — Why It Can't Be Called "Parallelism," and 25% GPU Utilization
+
+- **Question**: can this actually be called a parallelism process? The term 'parallelism' has been used, but looking carefully, this is not really a genuine parallelism process.
+- **Why**: at every time step, only one machine is working, meaning no parallel computation happens at all. In data parallelism, the only difference across machines was having different datasets, so each could process its own data in parallel — with $n$ machines, $n$ machines could work simultaneously at every time step. But here, only one GPU is working at any given moment. This means the naive approach is neither a real pipeline nor a real parallelism process — it's just a very naive approach meant to give intuition for pipeline parallelism.
+- Because of this, many **bubble** regions appear where the machines aren't really working, and since the whole process is effectively sequential, GPU utilization is actually very low. Because every process is sequential and correlated with the others, no machine works at the same time as another, leaving lots of idle time — GPUs are so underutilized in this naive, version-0 approach that one would want to drop the word 'parallelism' from the description.
+- Without parallelism, training can become very slow: even with as many as 100 GPUs, you'd still have to process 100 forward propagations and 100 backward propagations sequentially, which takes a long time. On top of that, since this happens across different GPUs, there is always communication involved — from GPU 0 to GPU 1, GPU 1 to GPU 2, and so on — making this a very inefficient process.
+- **Revisiting why parallelism is impossible**: forward propagation on the next layer can't happen before receiving the output of the earlier layer, so machines can't work at the same time during forward propagation. Similarly, backward propagation on earlier layers can't happen before receiving the gradient from later layers, so this stage can't be parallelized either.
+- As seen in the §64 4-GPU example, this approach's GPU utilization is exactly **25%**. In summary: this naive approach greatly improves both parameter memory (§65) and activation memory (§66), but the remaining problem is that it isn't real parallelism, so GPU utilization is very low.
+
+### 68. Introducing Micro-Batches and GPipe (Google, NeurIPS 2019)
+
+- **The remaining goal**: to fix the problem where only one GPU works at each time step while the rest wait. I.e., find a way to keep the same architecture (splitting the model the same way) while letting different GPUs compute in parallel.
+- **The idea**: to make GPUs work in parallel, you need to feed new data into GPU 0 again right after its forward propagation finishes — that is exactly what **GPipe** does.
+- **Micro-batches**: in version 0, the full mini-batch was fed into GPU 0 at once, and only after forward propagation finished was the full activation passed to the next GPU. Now, instead of feeding the full mini-batch all at once, each mini-batch is split further into multiple **micro-batches** — e.g., 4, 2, or 8 micro-batches, a choice left to the user, but splitting into multiple micro-batches is the key idea.
+- **Notation**: $F_{ij}$ denotes forward propagation at GPU $i$ on the $j$-th micro-batch (likewise, $B_{ij}$ will denote backward propagation later — §70).
+- **Walking through it (assuming 4 GPUs and 4 micro-batches)**:
+  - $t_0$: feeding micro-batch 0 into GPU 0, GPU 0 does forward propagation — $F_{0,0}$.
+  - $t_1$: GPU 1 receives the forward-propagation signal for micro-batch 0 and does its own forward propagation ($F_{1,0}$), while at the same time the next micro-batch can be fed into GPU 0 ($F_{0,1}$) — now two GPUs are working simultaneously.
+  - $t_2$: GPU 2 does forward propagation for micro-batch 0 using the signal from GPU 1 ($F_{2,0}$), while GPU 1 does forward propagation for micro-batch 1 ($F_{1,1}$), and micro-batch 2 can be fed into GPU 0 ($F_{0,2}$) — now three GPUs are working simultaneously.
+  - $t_3$: assuming there are four micro-batches and four GPUs, this keeps going, and at this time step **GPU utilization reaches 100%** (GPU 1 is doing forward propagation for micro-batch 2, $F_{1,2}$).
+  - So while only one GPU was working at the first step, now two, three, and four GPUs work simultaneously in sequence — much better than the previous approach.
+- **A slide typo, corrected live in class**: the slot where GPU 2 does forward propagation for micro-batch 1 ($F_{2,1}$) was mistakenly labeled "$F_{1,1}$" on the slide — the instructor pointed this out directly in class, correcting it to "since this happens on GPU 2, this index should be $F_{2,1}$," and noted he'd fix the slide later.
+
+### 69. GPipe's Design Choice — Finish All Forward Passes Before Starting Any Backward Pass
+
+- Continuing the process above (at the point where GPU 2 is doing forward propagation for micro-batch 1 while GPU 3 is doing forward propagation for micro-batch 0 at the same time), there is no more micro-batch left to feed in — the current goal is to update the model using this mini-batch. So feeding new micro-batches stops.
+- **Question**: what should GPU 3 (the GPU whose forward propagation finishes first) do next? There are basically two options, assuming only one computation can happen at a time:
+  1. Start backward propagation for micro-batch 0 right away — but then forward propagation has to stop, so GPU 3 can't do forward propagation for micro-batch 1 at the next time step.
+  2. Have GPU 3 continue forward propagation for micro-batch 1 — but then backward propagation for micro-batch 0 can't start yet.
+- **GPipe's choice**: **finish all forward passes first.** This is GPipe's simple approach, and it's easy to understand because backward propagation isn't a concern until all forward passes are done. Once this stage completes, forward propagation for every micro-batch is complete, and the final GPU (GPU 3) is left holding the final output for each micro-batch.
+
+### 70. GPipe's Backward Stage — Notation $B_{ij}$ and Pipeline Progression
+
+- There are two things one could do with the final outputs sitting on the last GPU. The first option is to compute the total loss over all samples in the mini-batch and run backward propagation all at once — **this is not done**, because it would revert to the naive approach where only one GPU works at each time step. Instead, the GPipe authors keep using the concept of micro-batches: **the loss is computed separately for each micro-batch, and backward propagation is run separately for each as well.**
+- **Walking through it**: backward propagation for micro-batch 0 happens first (on the last GPU) — $B_{3,0}$. Next, GPU 2 receives the backward-propagation signal from GPU 3 and processes backward propagation for micro-batch 0 — $B_{2,0}$. At the same time, GPU 3 can start backward propagation for the next micro-batch. Continuing this way, in the backward-propagation process GPU 0 does backward propagation for micro-batch 0 ($B_{0,0}$) while GPU 1 does backward propagation for micro-batch 1 ($B_{1,1}$), and so on — once again, whereas only one GPU was active before, now all four GPUs are doing backward propagation simultaneously.
+- Once backward propagation for micro-batch 0 finally completes on GPU 0 (once the signal reaches the first layer, the computation is done), micro-batch 0 no longer needs attention. Next, GPU 0 receives the backward-propagation signal for micro-batch 1 ($B_{0,1}$), and GPU 1 receives the backward-propagation signal for micro-batch 2 from GPU 2 ($B_{1,2}$) — and so on.
+- **Notation**: $B_{ij}$ denotes backward propagation at GPU $i$ on the $j$-th micro-batch.
+
+### 71. Pipeline Bubble — the Utilization Ramp-Up/Ramp-Down Time-Step Diagram
+
+- The advantage of this approach (GPipe): at specific time steps, four, three, or two GPUs are working simultaneously, letting GPUs work in parallel unlike the very naive approach.
+- **As a time-step diagram**: at time step 0, only one GPU is working, since only the first micro-batch has been fed in. After that, the next GPU processes that micro-batch while GPU 0 processes the next one, and so on — new micro-batches keep being fed into GPU 0, with the signal propagating to the next GPU each time — the number of active GPUs **ramps up** 1 → 2 → 3 → 4. (The instructor noted that some of these time steps correspond to specific pages of the Week 2 lecture notes — the point where only two forward propagations happen, and the point where four GPUs do forward propagation simultaneously — though the original slides were not separately checked for this note.)
+- After that, since GPipe decided to wait until all four forward propagations finish before starting backward propagation, there's no more micro-batch left to feed, so the number of active GPUs **ramps down** 3 → 2 → 1 (the stage where forward propagation drains out of the pipeline) — GPU utilization decreases here.
+- Once backward propagation starts, backward propagation for micro-batches 0, 1, 2, 3 can keep being fed in, so the number of active GPUs **ramps up** again 1 → 2 → 3 → 4, reaching a stage where all GPUs work simultaneously, and finally **ramps down** 3 → 2 → 1 once the first GPU completes backward propagation for the last micro-batch, ending the process.
+- Below is this pattern (the 4-GPU, 4-micro-batch example described in class) reconstructed as a time-step table — this is not a literal copy of the original slide, but a reconstruction combining the individual $F_{ij}$/$B_{ij}$ values mentioned in class (§68–70) with the ramp-up/ramp-down narration:
+
+  | $t$ | GPU0 | GPU1 | GPU2 | GPU3 | # active GPUs |
+  |---|---|---|---|---|---|
+  | $t_0$ | $F_{0,0}$ | | | | 1 (25%) |
+  | $t_1$ | $F_{0,1}$ | $F_{1,0}$ | | | 2 (50%) |
+  | $t_2$ | $F_{0,2}$ | $F_{1,1}$ | $F_{2,0}$ | | 3 (75%) |
+  | $t_3$ | $F_{0,3}$ | $F_{1,2}$ | $F_{2,1}$ | $F_{3,0}$ | 4 (**100%**) |
+  | $t_4$ | | $F_{1,3}$ | $F_{2,2}$ | $F_{3,1}$ | 3 (75%) |
+  | $t_5$ | | | $F_{2,3}$ | $F_{3,2}$ | 2 (50%) |
+  | $t_6$ | | | | $F_{3,3}$ | 1 (25%) |
+  | $t_7$ | | | | $B_{3,0}$ | 1 (25%) |
+  | $t_8$ | | | $B_{2,0}$ | $B_{3,1}$ | 2 (50%) |
+  | $t_9$ | | $B_{1,0}$ | $B_{2,1}$ | $B_{3,2}$ | 3 (75%) |
+  | $t_{10}$ | $B_{0,0}$ | $B_{1,1}$ | $B_{2,2}$ | $B_{3,3}$ | 4 (**100%**) |
+  | $t_{11}$ | $B_{0,1}$ | $B_{1,2}$ | $B_{2,3}$ | | 3 (75%) |
+  | $t_{12}$ | $B_{0,2}$ | $B_{1,3}$ | | | 2 (50%) |
+  | $t_{13}$ | $B_{0,3}$ | | | | 1 (25%) |
+
+- The ramp-up/ramp-down regions at both ends (the start of forward propagation, the end of backward propagation) and in the middle (between the end of forward and the start of backward) are exactly what's commonly called the **pipeline bubble**. Per the closing summary (§72), the concept of micro-batches keeps GPUs busy "most of the time," and parallel processing of forward propagation and of backward propagation reduces this pipeline bubble — compared to the naive version 0 (§64, fixed at 25% GPU utilization), there is much less white space (idle time).
+
+### 72. Wrap-Up and Next Week's Preview
+
+- **GPipe** was proposed by **Google** and published at **NeurIPS 2019**, one of the top-tier machine learning conferences. (A side comment from the instructor: this kind of systems-side paper does get accepted at top-tier conferences like this, though nowadays fewer such papers appear and more AI-generated papers get submitted.)
+- **GPipe's key takeaways**: micro-batches are fed into the pipeline sequentially, and while GPU 1 processes micro-batch 2, GPU 2 can process micro-batch 1, and so on — the concept of micro-batches keeps the GPUs busy most of the time. Parallel processing of forward propagation and of backward propagation reduces the pipeline bubble.
+- Now, finally, this can genuinely be called a **parallelism** process — because at a given time step, multiple GPUs are working simultaneously, so GPU utilization has increased a lot. Compared to the naive version 0, most of the white space is now filled in.
+- **Next week's preview**: several concepts that try to improve on GPipe will be covered. The philosophy stays the same — still using the concept of micro-batches — but the goal is to find more efficient ways to further raise GPU utilization.

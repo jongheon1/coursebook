@@ -310,3 +310,101 @@ $$
 - **Bits vs. qubits** (already flagged in the Day 4 notes as carried over from "slide 62 onward") was also not covered this session — still carried over.
 - **The formal introduction of complex numbers, conjugates, and polar form, and the derivation of the $H\otimes H$ matrix entries** were again previewed as "next week" material this session (the instructor referenced this twice — once while explaining complex-number addition, once while explaining phasors) — still not formally covered.
 - The identity of the "additional element" in $U_f$ (the classical AND gate converted into a unitary operator) was not mentioned this session, since it's unrelated to today's topic — it remains exactly as unresolved as it was after Day 4.
+
+## Day 6 (2026-09-21) — Wrapping Up Complex-Number Representations (Rectangular, Polar, Exponential) and atan2, First Steps into Real Vector Spaces
+
+> Source: not a lecture recording but the dialogue transcript of a review-and-continue session held right before the Chuseok holiday (`2026-09-21-quantum-computer-programming-1.json`, titled "Complex Numbers: Polar/Exponential Form & Intro to Vector Spaces," about 52 minutes). No specific slide filename or page numbers are mentioned in this transcript, so this section carries no page citations. It cements the formal treatment of complex numbers (conjugates, polar form, exponential form) that had been previewed as "next week" at the end of Day 5, and at the end builds the first bridge into vector spaces (starting with real vector spaces).
+
+### 1. Complex-Number Recap — Motivation, Definition, and Arithmetic (Rectangular Form)
+
+- Reconfirmed the underlying motivation for needing complex numbers for the Hilbert space: some polynomial equations have no solution within the reals R. To fix this, a symbolic number $i$ is introduced — the square root of $-1$, not a number that actually exists, just a symbol we add. Defining $i^2=-1$ lets an equation like $x^2=-1$ be solved as $x=\pm i$. Such numbers are called imaginary numbers.
+- $i\cdot i\cdot i = i^2\cdot i = -1\cdot i = -i$ works directly, and multiples of $i$ can be freely formed (e.g., $2i$, $-i$, $-100i$). Adding a real number to these gives complex numbers like $3+5i$ or $5+\sqrt2\,i$ — made up of a real part and an imaginary part.
+- General form: $z=a+bi$ (the $\times$ is dropped, written as $bi$). **Note**: $a,b$ are both ordinary real numbers — the only strange thing we introduced is $i$ itself; $b$ is simply multiplied by it.
+- **2D-plane visualization**: the x-axis is the real axis, the y-axis is the imaginary axis. E.g., $1+i$ starts at 1 on the real axis and goes up 1 along the imaginary axis. $0+i$ (i.e., $i$) sits at real-axis 0, one unit up the imaginary axis. $-0.5i$ sits below the real axis.
+- **Interesting point**: every real number (e.g., 2.5) needs only a single axis (0 to $+\infty$, $-\infty$) to be represented, but the imaginary part introduces a second dimension — this is exactly why the vector space gets bigger later and connects directly to qubits (a qubit's superposition vector uses complex numbers as scalars, so a single complex number carries more information).
+- **Notational convention**: slides/textbooks typically denote complex numbers with letters like $Z$, $C$, or $W$. The amplitudes of a qubit, to be covered soon, are also complex, denoted with Greek letters like $\alpha$, $\beta$.
+- **Equality**: (recap of previously covered material) two complex numbers are equal iff their real parts are equal and their imaginary parts are equal.
+- **Addition**: add real parts together and imaginary parts together — $(a+ib)+(c+id)$ has real part $a+c$ and imaginary part $b+d$. Visualized via the parallelogram rule: draw each number as a vector and add them; the resulting vector is the sum.
+- **Multiplication**: can always be computed by expanding directly, $(a+ib)(c+id) = ac + iad + ibc + i^2bd$. A faster formula: real part $ac-bd$, imaginary part $ad+bc$.
+- All of these rules together make the complex numbers a field, and in particular they are **algebraically complete** — so an equation like $x^2+1=0$ now has a solution (even if that solution is complex).
+
+### 2. Modulus and Complex Conjugate
+
+- **Modulus**: the length of the segment from the origin to the complex number. For $z=x+iy$, $|z|=\sqrt{x^2+y^2}$. Since $x,y$ are real and get squared, summed, and square-rooted, the result is always real (and positive) — a good property, since "length" ought to be a real number.
+- **Complex conjugate**: the conjugate of $z=x+iy$ flips only the sign of the imaginary part, giving $z^*=x-iy$ (written with an asterisk). **Geometric meaning**: flipping the sign of the imaginary part is exactly a reflection across the real axis (x-axis).
+- Conjugation distributes over both multiplication and addition: the conjugate of a product equals the product of the conjugates, and likewise for a sum.
+- **Connection to Born's rule**: getting a probability from an amplitude $\alpha$ (or $z$) requires taking the norm squared — and a faster way to compute the norm squared is $|z|^2 = z\cdot z^*$ (this is commutative: $z\cdot z^* = z^*\cdot z$) — often more convenient than directly computing $\sqrt{x^2+y^2}$.
+- **The instructor's check-by-two-methods example**: $z=1+2i$.
+  - Method 1 (definition): $|z|^2 = 1^2+2^2 = 1+4 = 5$.
+  - Method 2 ($z\cdot z^*$): $z^*=1-2i$. Plugging into the $(a+ib)(c+id)$ formula: real part $ac-bd = 1\cdot1 - 2\cdot(-2) = 1+4 = 5$; imaginary part $ad+bc = 1\cdot(-2)+2\cdot1 = -2+2=0$.
+  - Both methods agree at $5$ — check confirmed.
+
+### 3. Introducing Polar and Exponential (Euler) Form
+
+- The $x+iy$ form can be cumbersome to work with, so mathematicians devised two alternative representations: **polar representation** and **Euler's representation**.
+- $x+iy$ is called **Cartesian representation**, or **rectangular representation** for short (since $x,y$ are rectangular coordinates on the complex plane). The same complex number can also be uniquely specified by an angle $\theta$ from the real axis and a distance (norm) $r$ from the origin — this is polar representation.
+- **Relation**: $x+iy = r(\cos\theta + i\sin\theta)$. Picturing a point at angle $\theta$ on the unit circle, its projection down gives $\cos\theta$ (the real-axis component) and the other gives $\sin\theta$, which lies along the imaginary direction so becomes $i\sin\theta$; if the point isn't on the unit circle, scale the whole thing by $r$.
+- **Converting polar → rectangular (easy)**: $x=r\cos\theta$, $y=r\sin\theta$.
+- **Converting rectangular → polar**: the norm $r=\sqrt{x^2+y^2}$ is easy, but the angle $\theta$ is the tricky part.
+
+### 4. Finding the Angle — Simple Cases, atan with Quadrant Correction, and atan2
+
+- **Boundary/simple cases first (worked through student Q&A)**:
+  - $x=0, y>0$ (positive imaginary axis): a student correctly answered $\theta=\pi/2$.
+  - $x=0, y<0$ (negative imaginary axis): a student correctly answered $\theta=3\pi/2$ (the instructor added that the same angle can also be written as $-\pi/2$).
+  - $x=0, y=0$ (the origin): $\theta=0$ by convention.
+- **General case — inverse tangent (atan)**: $\theta = \arctan(y/x)$. If the point is in quadrant Q1 or Q4, this value can be used directly.
+  - **Python-interpreter demo**: imported `atan`, `sqrt`, and `degrees` from the `math` module. Example $z=2+2i$: $y/x = 2/2=1$, taking $\arctan(1)$ in radians and converting with `degrees()` gives $45°$ — Q1, so no correction needed.
+  - **Q2/Q3 correction**: in quadrant Q2, the correct angle is obtained by **subtracting** $\pi$ from the $\arctan(y/x)$ result; in Q3, by **adding** $\pi$. All you need is to know which quadrant you're in (easily determined from the signs of the real and imaginary parts).
+  - **Negative-angle example**: one example number, when computed via $\arctan$, gives a negative angle like $\theta=-4\pi/3$ — this isn't a problem; adding a multiple of $2\pi$ shifts it into the desired (positive) range. In this case adding $2\pi$ gives the equivalent positive angle $2\pi/3$.
+- **A more convenient function — `atan2`**: `atan` already takes only the ratio $y/x$ as its argument, so it has already lost the sign (quadrant) information, requiring manual correction. `atan2`, by contrast, takes $x$ and $y$ separately, preserving the sign information and automatically correcting for every quadrant.
+  - **Example**: $x=-1, y=\sqrt3$ (i.e., $-1+i\sqrt3$, in Q2) — with the old method this required subtracting $\pi$ from the $\arctan$ result, but with `atan2` this correction happens automatically, giving $120°$ directly. Demo: import `math`, set $x=-1$, $y=$ `math.sqrt(3)`, get the modulus directly via a function in the `math` module (the exact function name wasn't specified in the transcript), and compute the angle as `math.atan2(y, x)`.
+  - **A gotcha the instructor deliberately flagged**: `atan2`'s **argument order is $y$ first, then $x$** — it's tempting to write $x$ first out of habit from coordinate pairs $(x,y)$, but swapping the order breaks the function, so care is needed.
+- **Chuseok-break exercise**: students were assigned a small exercise using `atan2` to convert four example points (already plotted on the plane in the slide) and verify the conversions come out correctly.
+
+### 5. Exponential (Euler) Form — Derivation and Background
+
+- The trig functions still present in polar form, $\cos\theta+i\sin\theta$, can be awkward to work with in calculations, so there had long been a desire for a trig-free representation — the mathematician **Leonhard Euler** devised one around the 1700s.
+- **Identity**: $\cos\theta + i\sin\theta = e^{i\theta}$ — where $e$ is Euler's number (named after the person who created this representation), about $2.718$. The instructor mentioned that this derivation rests on the Taylor expansion of these terms (the detailed derivation wasn't covered, only pointed to as further reading).
+- So the full polar form can be written $r(\cos\theta+i\sin\theta) = r\,e^{i\theta}$ — called **exponential form** (because of the exponent). It's more compact since sine and cosine drop out, and it will be used frequently going forward to express qubit states.
+- The form $e^{i\theta}$ itself (without an extra factor of $r$) is important because it always has **modulus 1** — a special complex number sitting on the unit circle. Computing the norm of such numbers always gives 1, a concept that also shows up frequently in transformations.
+- **Wrapped phase**: the $e^{i\theta}$ representation isn't unique — $\theta=2\pi$ points to the same location as $\theta=0$, and $4\pi$, $6\pi$, etc. are all just different representations of the same complex number. So taking the angle modulo $2\pi$ to restrict it to one trip around the unit circle is called the "wrapped phase $\theta$."
+
+### 6. Four Special Angles Worth Memorizing — $\theta=0,\pi/2,\pi,3\pi/2$
+
+- $\theta=0$: $e^{i\cdot0}=e^0=1$ (real).
+- $\theta=\pi/2$ (90°): the point on the positive imaginary axis, so $e^{i\pi/2}=i$.
+- $\theta=\pi$: half a turn around the unit circle, so $e^{i\pi}=-1$ (real again).
+- $\theta=3\pi/2$: $e^{i\cdot3\pi/2}=-i$.
+- These four values $1,i,-1,-i$ are worth memorizing so you can substitute them directly whenever they show up in a calculation — the practical point being emphasized is that there's no need to keep carrying around a long, unwieldy exponential term when you already know it equals one of these.
+
+### 7. Bringing the Three Representations Together, and Phase — the Link Back to the Double-Slit Phasor
+
+- All three representations are summarized in one picture: **rectangular** $x+iy$, **polar** $r\angle\theta = r(\cos\theta+i\sin\theta)$, and **exponential/Euler** $|z|\,e^{i\theta}$ (where $r=|z|$).
+- The angle $\theta$ is called the **phase** of the complex number — knowing the angle and $r$ fully determines the complex number, and since the modulus is often 1, the angle alone is often enough to know the number.
+- **Why this should already feel familiar**: recall that in the double-slit experiment, the mechanism by which a wave propagates from the source was called a phasor — that rotating vector spins around a circle, and its height generates the wave's amplitude; the rotating phase $\theta$ is exactly what generates the wave. For the same reason, the $\theta$ in a complex number's polar/exponential form is also called its phase.
+- Qubits also have a phase — in fact two of them (global phase and relative phase), which will be covered in more detail later (not elaborated this session).
+
+### 8. Why Exponential Form Wins for Multiplication/Division, but Rectangular Wins for Addition/Subtraction
+
+- Given two complex numbers $z_1=r_1e^{i\theta_1}$, $z_2=r_2e^{i\theta_2}$:
+  - **Multiplication**: multiply the magnitudes ($r_1 r_2$) and add the angles (phases) — $z_1 z_2 = r_1r_2\,e^{i(\theta_1+\theta_2)}$. This is much cleaner than having to use the $ac-bd$, $ad+bc$ formula in rectangular form.
+  - **Division**: similarly, divide the magnitudes and subtract the angles.
+  - **Conjugate**: in exponential form, just flip the sign of the angle — $\overline{re^{i\theta}} = re^{-i\theta}$. This is because conjugation is a reflection across the real axis (e.g., $45°\to-45°$). This is the same underlying principle as taking the conjugate in rectangular form (flipping the sign of $y$), but in exponential form it reduces to flipping the sign of a single angle.
+- **Conclusion (the instructor's intuitive takeaway)**: multiplication and division suit exponential form much better, while addition and subtraction are actually better handled in rectangular form — so we keep both forms around and pick whichever is more convenient for the situation.
+- Wrapped up the complex-number portion of the session by pointing to Professor Yanofsky's textbook and Chapter 1 of Professor Loceff's lecture notes as further reading — questions to be posted on LearnUs.
+
+### 9. From Complex Numbers to Vector Spaces — Why We Did All of This
+
+- **Restating the point of the exercise**: the ultimate goal is to represent qubits. A qubit is a vector in a vector space, and that vector space uses complex numbers as its scalars — that's exactly why complex numbers were introduced in the first place. A qubit is essentially a vector — a linear combination of two already-known basis vectors — where the coefficients $\alpha,\beta$ are now understood to be complex.
+- **Order of progression**: build the vector space in two stages — first a **real vector space** (mostly a repeat of high-school algebra, except for some new material around the inner product), then a **complex vector space**.
+- **Two things that characterize a vector space**: dimension and the type of scalar. Examples of dimension: $\mathbb{R}^2$ (the 2D plane, a vector space for 2D vectors), or $\mathbb{R}^3$ and higher. Scalars can vary — complex, real, Boolean, and so on.
+- **The real vector space $\mathbb{R}^2$**: like the complex plane, one vertical dimension and one horizontal dimension. A vector is just a pair of numbers — e.g., $(2,-5)$, $(1,5)$.
+- **Two special vectors, $(1,0)$ and $(0,1)$**: each can be drawn on the 2D plane (a vector $(x,y)$ means moving $x$ along the x-axis and $y$ along the y-axis). These two vectors are exactly the ones already familiar as **ket-0 $|0\rangle$** and **ket-1 $|1\rangle$** — $(1,0)$ corresponds to the direction seen in the photon experiment, $(0,1)$ to the other direction. Ket notation is used because these two vectors both have length 1 (both have norm 1).
+
+### 10. Preview for Next Week — Inner Product, Overlap/Projection, and Complex Vector Space (Qubits on a Sphere)
+
+- A quick preview for next week: these vectors will be used to introduce the **inner product**, which finally lets us compute the **overlap** between two vectors — the **projection** of one vector onto another.
+- **Connection back to the photon-polarization experiment (previewed)**: this inner product is exactly the operation that gives the amplitude in the photon-polarization experiment — given some photon polarization state, the probability with which it collapses onto a particular basis vector is determined by this inner product. In other words, that amplitude is essentially the inner product between two vectors.
+- The plan is to work through this inner product with real vectors first, connect it back to the photon-polarization experiment, and then move on to complex vector spaces.
+- **A complex vector space can no longer be drawn on a plane**: even a "2D" vector has two scalars, and each scalar (being complex) has two real dimensions (real and imaginary parts), so it effectively becomes **four-dimensional**. As a result, this vector — the qubit — ends up living on a **sphere** rather than a plane, as previewed. The instructor closed the session by acknowledging things are "getting a bit more complicated, but we'll go one step at a time."
