@@ -773,3 +773,195 @@ This section is the professor's brief recap of a student presentation on a paper
 ### 32.4 Preview of the exercise — summarizing the parameters and the offline/online distinction
 
 - The closing question posed for discussion in the offline class: summarize the **notation and meaning** of the real-time task parameters $C_i, T_i, D_i, U_i, A_i, S_i, F_i, R_i$, and work out which of them are knowable **offline (at design time)** versus only **online (at runtime)**.
+
+## 33. [Day 8] Student presentation roll call and an Exercise recap — offline vs. online for task parameters (⚠️ sections 33–35: no slide deck — recorded from the lecture audio only)
+
+> Source: 2026-09-29 lecture recording (the eighth session; recap project result document `2026-09-29-real-time-systems-1.json`, titled "Student Presentations & Scheduling Policies: FCFS, SJF, LLF," 143 paragraphs total, roughly 99 minutes/5,934 seconds). A Tuesday session. **This session splits broadly into two parts**: (1) a **first half with no corresponding slide deck** (t≈60–2759) — presentation-order roll call, a presentation/discussion resolving the "offline vs. online for task parameters" question previewed back in Day 7 section 32.4, course-logistics announcements (midterm, presentation-participation rules, upcoming schedule), and a brief spoken recap of modeling concepts as a bridge into today's real content (sections 33–35 below). (2) a **second half that walks straight through the `CAS4155_2026Fall_Lecture_Note05.pdf` deck** ("Scheduling Time-Critical Tasks: Part 1"; from t≈2787 on, sections 36–41 below) — laid out on the catch-up site (`real-time-systems/w05`), which covers pages 1–17 of this 24-page deck. **Caveat**: the recap document's session title mentions "FCFS, SJF" (the classical scheduling policies on pages 18–24), but this session's actual content stops around page 17 (Optimality Criteria) — FCFS and SJF are not covered here. STT quality is uneven in patches throughout this recording too (especially in this section, with multiple overlapping speakers), and a few sentences are carried over with their meaning unclear.
+
+### 33.1 Presenter roll call, picking up the question previewed last time
+
+- The recording picks up mid-way through some computation already in progress (revisiting task timing parameters: $r_i$ (start time), $d_i$ (absolute deadline), completion time, finish time, tenure, relative deadline = $d-r$, etc.) — the portion before that is not in the recording.
+- Starting around t=230, "next slide, please" repeats for a stretch — the group appears to be paging quickly through several slides, but exactly what was being paged through can't be reconstructed from STT alone.
+- t=600–640: after briefly touching on some computation problem ("the first of two problems is trivial, the second isn't"), the professor calls up this session's presenters in order — **the first pair: Charles, Agnes**, **second: Chris** (bringing up slides), followed by **Gwendolyn**, **Kylian**, and several more called up in succession (the full roster isn't entirely recoverable from STT).
+- The stretch that follows, t=749–2143, appears to be the presentation/discussion of the question the professor previewed back in Day 7 section 32.4 — "which of the real-time task parameters $C_i, T_i, D_i, U_i, A_i, S_i, F_i, R_i$ are knowable offline vs. online" — (no presenter is named directly, but references like "that student" and "what he said" suggest this is the professor's Socratic Q&A on one student's presentation).
+
+### 33.2 "How do you determine Ai and Ti?" — the control-system example and how flexible activation time really is
+
+- The student's core question, as the professor reconstructs it: **how do you determine Ai (arrival/activation time) and Ti (period)?**
+- The professor corrects an earlier answer: "it seems I said earlier that, looking only at activation time, Ai is as close as possible to Ti — but in reality it's different from what we learned," and revisits the **control example**: Ti is determined based on control and safety, but in practice there can be some **margin** — e.g., Ti might be tighter than "every 10 seconds," maybe around 9 seconds. Flagging this as "just one example," the professor summarizes that how to actually determine this is usually a matter of **systems development and systems performance**.
+
+### 33.3 What "the scheduler is deterministic" means — knowing the release pattern
+
+- Another student asks again what it means for "the scheduler to be deterministic." The professor restates that student's argument: **"if we know all future job release patterns, that means we know Ai exactly, and then the scheduler knows everything, so it can determine — fix — what happens at every point in time."**
+- A student pushes back: reviving last week's (Day 6 section 16) cache-analysis discussion, arguing that **even on a single processor, a task's full execution behavior can't be deterministic** — under load, user input (keyboard, mouse, etc.) can't be predicted, so "this isn't a simple caching situation."
+- The professor: "that student's argument is right, and yours is too," then adds a further condition — **assume we know the worst-case execution time (WCET)**. From the scheduler's perspective, a task that starts at T1 should, per its WCET, finish at T2; but if it actually finishes earlier (say at T5), a technique of **idling the system as though it finished at T2** can make the system deterministic — with the explicit caveat that **"the actual execution time itself can't be predicted before runtime."**
+
+### 33.4 Offline vs. online, parameter by parameter — Ci, Ai
+
+- **Ci (computation time)**: in its raw sense, "just computation time," it can't be known before execution because of caching and other effects — it's **determined only online**. But we usually treat it as an **upper bound (WCET)** — through profiling (running it many times before runtime to learn the execution-time distribution), if the observed worst case is taken as the computation time, **it's then treated as an offline computation time.**
+- **Ai (arrival time)**: if a task is **periodic** and the first release (time zero) is known, every subsequent release ($T_i, 2T_i, 3T_i, \ldots$) can be known offline. If it's **sporadic**, though, even knowing the first release tells you nothing about the second — it's **determined only online**. In general, Ai **depends on an online test**, but if the task is periodic and its release times are known ahead of time, it can go either way (the professor: "it's not that simple").
+
+### 33.5 Putting it together — full determinism when both the release pattern and (a strict) execution time are known
+
+- The professor revisits the example task set from a previous lecture note (priority-based, preemptive: 4, 1, 5, 2, 7, 2, 3, 0), showing a schedule where **the start time, finishing time, and response time can all be computed before execution even happens** — but only under the assumption that this is the **actual (exact) execution time, not the worst case**.
+- If execution time really only ever takes **a single fixed value**, then every execution is strictly fixed — and applying the earlier **"idle the system as though it finished at T2"** technique can force determinism, though the professor adds, **"we don't usually do that."**
+- **Final summary**: (1) if the release follows a **strict period** with a known starting phase of zero, and (2) the execution time is also known as a single exact value, then everything can be determined before runtime (offline) — that much is possible. But **"that's why I said this answer isn't trivial,"** reiterating that in general, start time, finishing time, and response time all depend on which scheduling policy is applied.
+
+### 33.6 Revisiting measurement and analysis, and why it's okay to ignore context-switch overhead
+
+- The professor notes that the same student also brought up **measurement and analysis**: **measurement** is what the professor calls "profiling" — running something many times before actual runtime is, in a sense, **itself a form of runtime measurement** (since each run differs, you take the worst one observed). **Analysis** means analyzing the upper bound (WCET) before actual execution — **both are needed before actual execution**, serving the same purpose.
+- **The context-switch-overhead question**: a student asks whether it's okay that some theoretical papers assume zero context-switch overhead. The professor gives two answers:
+  1. **Theoretically, it's fine** — a property of priority-based scheduling (to be covered later) bounds how many times each job can be preempted, so adding that bound (e.g., 0.1 seconds) to every execution accounts for the overhead.
+  2. **Solving the problem first without the overhead, then extending the result to the general case with overhead**, is also a valid approach.
+
+## 34. [Day 8] Course-logistics announcements — midterm weighting, the presentation-participation rule, and the upcoming schedule (⚠️ no slide deck)
+
+### 34.1 Exercise instructions and the midterm's scope and weighting
+
+- Wrapping up questions, the professor switches to announcements: **as usual, there's an exercise.** Problem 1 is about **supplement 0.1** (building a computer system — look at operating-systems and computer-architecture conferences). Problem 2 covers content from **Lecture 5** (to be taught today or soon), so it will make sense once that's covered; it's **already due next week.**
+- **The midterm**: **Tuesday of week 8**, same time and place, held **offline** (the date was already announced in the first lecture). **Nothing but a pen is allowed.** Scope: everything covered before the midterm period — **Lectures 0 through 6, and Lecture 7 only up to page 33**, plus **supplement 0.1** from Lecture 1.
+- **Weighting**: **the midterm is worth 20%, the final 40%.** The midterm asks for understanding of basic concepts and terminology; the final asks for an in-depth understanding of all the content. The professor mentions that a year ago, the same course's midterm had two versions, but **this semester's problems haven't been made yet.**
+- Asked **whether the papers covered by student presentations are in scope for the midterm**, the professor answers that **only the high-level ideas need to be understood** — adding "aside from the introduction, there's no way for me to write problems off the papers," then immediately hedging with "I didn't say that." The point, reiterated, is **"the general picture of what was covered."**
+
+### 34.2 The presentation-participation requirement — at least once per semester
+
+- Shares a presentation-status sheet (keyed by the last four digits of student IDs) and asks students to flag any discrepancy with what they remember about their grading status.
+- **Exercises are graded automatically**, but for everything else the default rule is **writing down the key points yourself** (today being the one exception mentioned).
+- **You must present at least once per semester** — otherwise you lose **more than 10%, almost exactly half of the presentation grade** ("that's huge"). Plenty of chances remain — looking at this week's and last week's numbers, the count of students whose presentation percentage is above zero shows this; **anyone still at zero can claim a slot just by writing their name down.**
+
+### 34.3 The weeks 6–8 schedule — hybrid classes, the last offline class before the midterm, and video-watching instructions
+
+- Today's class will hand out **Exercise B** (kept as STT rendered it — whether this is the same label as the Exercise B covered back in Day 4, or a transcription artifact, can't be confirmed from this session alone). The next exercise (covering this week's regular **Lecture 4**) is also ready, and **Lecture 5** starts today too, with the plan to **finish Lecture 5 by this Thursday.**
+- **Thursdays in weeks 6, 7, and 8** will be **hybrid (offline + online) classes** — since all the lectures have already been recorded. Next Thursday (week 6) a **Lecture 6 review video** can be sent out.
+- **Thursday of week 7** will be the **last offline class before the midterm** — the early part will be an **exercise review spanning roughly Lectures 7–8**, so please **watch the two (already distributed) videos before next Tuesday if possible** (since next Tuesday's class will likely review up to that point).
+- Ahead of Tuesday's class, please **watch the Lecture 4 video by Friday** — because **Lecture 4's content is in scope for the midterm.** **Lecture 6 (week 6's)** should be watched **before next Tuesday's class.**
+- The professor points at the on-screen schedule to explain why it's laid out this way — mentioning the midterm date, the lecture placement for the next two to three weeks, and where the Thursday classes (Lecture 6 parts 1 and 2) fall. **The final's scope** is described (beyond the midterm's) as "part three — roughly the first two pages, the first three sections or so," though exactly what material this refers to isn't clear from this session alone.
+- After confirming there are no scheduling questions, the professor closes the announcements on a personal note — "I'm happy about this, and I think all of you are very fortunate to be here."
+
+## 35. [Day 8] Revisiting modeling — expressiveness and tractability again (a spoken recap of the same material as Day 7 section 27, bridging into today's content)
+
+- Right after the announcements, the professor revisits **modeling** verbally, with no slide — the same material as Day 7 section 27.1: a model needs to be **expressive** (able to reflect reality) while also being **tractable**. Models are needed because the reality we're trying to manage is complex.
+- If a model is **too complex or too expressive**, it ends up nearly identical to reality, which isn't useful; if it's **too simple**, it's too far from reality — manageable, perhaps, but its results become meaningless. **Some balance** is needed (substantively the same trade-off as Day 7 section 27.1).
+- The core of modeling is **clearly identifying assumptions** — simplification means adding assumptions. The assumptions given as examples for this course: **a single processor**, **no context-switch overhead**. Real systems do have overhead, but the simplification is justified because **the no-overhead case can be solved first, and the result later extended to the case with overhead** (the same point made in section 33.6's answer).
+- Defining the **variables that characterize the model**, and defining **metrics** to evaluate the system's output (performance), are also part of modeling.
+- **Preview of today's content**: this course will cover **feasibility**, building on key elements already introduced — release time, start time, finishing time, the schedule, and so on — starting in earnest from the next section.
+
+## 36. [Day 8] Review bridge — a periodic-task self-check quiz and a WCET recap (a likely match to Note05's "Task/Jobs (Remind)" slides)
+
+> From here, the second half of the session begins, walking directly through the `CAS4155_2026Fall_Lecture_Note05.pdf` deck ("Scheduling Time-Critical Tasks: Part 1"). Of the pages 1–17 laid out on the catch-up site (`real-time-systems/w05`), this section (36) appears to correspond to the "Task (Remind)" / "Tasks and Jobs (Remind)" review slides — though whether the later WCET recap (section 36.3) maps to a specific page of this distributed deck isn't confirmed, so it's marked as a spoken recap only.
+
+### 36.1 Revisiting control systems and periodic tasks
+
+- Recalling the control-system example again — from an input/output standpoint, control systems are naturally, usually, **periodic**. Configuring a task periodically makes each release a **job** — each instance of a task is one job (e.g., task i's first job, its fourth job).
+- **Definition of a periodic task**: looking at a job's release and each job's **inter-arrival time** is exactly what defines periodicity.
+
+### 36.2 Self-check quiz — the containment relationships among periodic, sporadic, and aperiodic
+
+- **Quiz 1**: an A/B choice question asking "is it periodic, sporadic, or aperiodic?" Students raise their hands to answer — confirmed that **A (the sporadic model can express the periodic situation) is true.** Reason: in the periodic case, the release gap between two consecutive jobs satisfies "**greater than or equal to** some fixed value" — so **the sporadic task model can also express periodic behavior** (though the periodic model requires the gap to be exactly equal, while sporadic only requires "at least," making sporadic the broader concept).
+- **Quiz 2**: a follow-up A/B question — "let's swap the sporadic model for the aperiodic model" — 30 seconds given to think, then confirmed. Confirmed true that **the aperiodic model can express the sporadic-task situation** — a sporadic task's inter-arrival gap effectively **has no lower-bound condition at all** (since the jobs can be sorted, the second job's release could even come later than the first's), meaning the aperiodic model already subsumes that case.
+- A student argues that there are situations belonging to the sporadic category but not the aperiodic one — the professor corrects this as **exactly the opposite**: **aperiodic is the superset containing sporadic.** Summed up as **"sometimes intuition matches the math, and this is exactly that case"** (extending the "sporadic is a generalization of periodic" relationship from Day 7 section 31.3 one step further: aperiodic ⊇ sporadic ⊇ periodic).
+
+### 36.3 Revisiting WCET-measurement techniques — analysis-based vs. measurement-based (wrapping up Lecture 4)
+
+- The discussion then revisits **worst-case execution time (WCET)** measurement (the same topic as Day 7 section 32, re-explained with a fresh example):
+  - **Measurement-based**: a program that measures actual execution many times across different distributions — e.g., observing 10, 20, and up to 30 seconds, and taking that maximum as profiling's "worst case."
+  - **Analysis-based**: directly analyzing the code — an if-statement runs branch A (2 seconds) if the condition holds, else branch B (3 seconds); if this branch runs up to **20 iterations**, multiplying the larger branch (3 seconds) by 20 gives a conclusion of **up to 60 seconds** (⚠️ the STT repeats almost the same explanation twice — consolidated here into a single pass).
+  - **The execution-time distribution**: from a set of observations (e.g., 1–7 seconds), one can distinguish **best observed**, **average**, and **worst-case observed**. But **the true WCET can always be larger than the worst observed value** — no matter how many times you measure, a different input could still be unknown, so all you really know is "at least this much." In practice, the typical approach is a **measurement-based analysis that multiplies the worst observed value by some margin factor (e.g., 1.5×).**
+  - **A mention of loop cycles**: a brief note that each large statement in the code relates to an iteration count (e.g., "100 times the execution time of all the instructions"), though it isn't followed up with a concrete worked example.
+- Wrapping up this recap, the professor asks, "any questions on Lecture 4? I'll assume you've all watched the video" and formally transitions to **Lecture 5 ("Scheduling Time-Critical Tasks, Part 1")** — briefly previewing the lecture sequence ahead: **Lecture 6 is Review 2, and Lecture 7 is Scheduling Periodic Time-Critical Tasks, Part 2.**
+
+## 37. [Day 8] Formal definitions of a schedule and a task set — feasible vs. schedulable, and the general scheduling problem (matches Note05 pp. 5–7)
+
+### 37.1 Revisiting response time, and the formal definition of a schedule
+
+- A quick reminder: recall the activation (release) point, and check for completion by looking at the **deadline**. **Response time** is the interval between point (1) (activation) and point (2) (completion) — reconfirmed as "mapping from (2) back to (1)." Example: if the relative deadline is 10 and the WCET is at most 10, a simple calculation confirms there's no deadline miss.
+- **Definition of a schedule**: some tasks run in the first time slot, other tasks in the second — that's a schedule. A schedule is called **feasible** if it satisfies a set of constraints.
+- **Examples of constraints**: **temporal constraints** tied to activation, period, and deadline — a job released at 0 with a deadline of 4 executing outside that window makes no sense (neither before activation nor after the deadline). There can also be **ordering constraints** between tasks (one task must run before another), and constraints for **synchronization** and **mutual exclusion** — the details are left for the next slide.
+
+### 37.2 Feasibility of a task set
+
+- **Task set**: a collection of tasks, as in the earlier slide's example (4, 1, 5, 2, 7 — three tasks).
+- **A task set is feasible** if **there exists an algorithm that generates a feasible schedule for it.** This course focuses feasibility specifically on **every job meeting its deadline** (generally it means meeting all constraints, but this course simplifies to deadlines).
+- Students are given 30 seconds to think through an exercise (scanning a schedule table to check whether it matches another — ⚠️ this portion of the STT is especially incomplete, and appears to lean heavily on board work/screen manipulation) confirming whether "these two schedules are the same."
+
+### 37.3 Schedulability — "with a specific algorithm" vs. "some algorithm exists"
+
+- **Schedulable with algorithm A**: for the same task set, if **algorithm A** produces a feasible schedule, the task set is **schedulable with algorithm A.** This means running that schedule "forever" never misses a deadline (tying back to Day 5 section 20's "is it valid forever?" argument).
+- **Feasible**: a task set is feasible if **some algorithm — any algorithm at all — exists (at least one) that produces a feasible schedule for it.** As the professor puts it, "even if I personally can't do it, as long as someone (anyone) can produce that schedule without error, it's feasible."
+
+### 37.4 A student's "clairvoyance" question, and the professor's distinction
+
+- A student posits an algorithm that can **see the future ("perfect")**, asking whether such an algorithm still fits the feasibility discussion. The professor names this **clairvoyance** — "perfect" means having perfect information even about the future; you might not actually be able to write code implementing such an algorithm, but it should be understood only as meaning **"some way exists to finish every task on time."**
+- The professor is explicit, though, that **"is it feasible?" and "how much information (clairvoyance) is needed?" are different questions** — knowing task parameters in advance (this course's setup) is, in a sense, related to "knowing the future," but that's a separate point.
+
+### 37.5 The formal statement of the general scheduling problem
+
+- **Problem setup**: given a task set of $n$ tasks (again using the earlier three-task example: 4, 5, 6, 7), a set of **$P$ processors** (always one in this course), and a set of **$R$ resources** (to be covered later under synchronization — ignore for now).
+- Each task's **WCET (the execution-time number) depends on the processor being used** — a faster processor lowers that number, so knowing that value already implies knowing the processor's performance.
+- **The problem**: find an assignment of P (processors) and R (resources) to the tasks that **produces a feasible schedule under a set of constraints.** Since this course always has one processor and ignores R, the discussion effectively centers on **the task set and the scheduling algorithm itself.**
+
+## 38. [Day 8] Complexity — Garey & Johnson's NP-hardness result and a 30-task example (matches Note05 pp. 8–9)
+
+- Introduces the result, from some years back, that **Garey and Johnson** proved **general scheduling problems are NP-hard** — meaning the time to find a feasible schedule grows **exponentially**. Fortunately, some **polynomial-time algorithms** also exist (assumed already covered in the algorithms course).
+- **Worked example — one processor, 30 tasks**: assuming an elementary operation takes one microsecond, three algorithms of differing complexity are compared:
+  - $O(n)$: only **30 microseconds**.
+  - $O(n^8)$: **more than 100 hours**.
+  - $O(8^n)$: **more than 40 billion years**.
+- **The point**: even a computer 1,000× faster only shaves **three zeros off** those numbers — hardware improvements barely matter against exponential complexity. This example drives home why complexity matters.
+
+## 39. [Day 8] Simplifying Assumptions — a single processor, fully preemptive, jitter ignored (matches Note05 p. 10)
+
+- The model this course adopts from here on, unless stated otherwise: **only one processor**, so only one task can run at a time (uniprocessor). The next step after understanding this is **multiprocessors** (e.g., four processors meaning four jobs run simultaneously), but **this course won't cover that.**
+- **The remaining assumptions**: every task is **periodic** and **fully preemptive** — meaning a higher-priority job can preempt whichever lower-priority job is currently running, at any time. For assignment purposes, **activation jitter is ignored (treated as zero)**, and there are no other instance constraints or response-time constraints.
+
+## 40. [Day 8] Scheduling algorithm taxonomy — preemptive/non-preemptive, static/dynamic, offline/online (matches Note05 pp. 11–14)
+
+### 40.1 Introducing the three axes, and preemptive vs. non-preemptive
+
+- Before classifying scheduling algorithms, three pairs of concepts are proposed for consideration first: **preemptive vs. non-preemptive**, **static vs. dynamic**, and **optimal vs. heuristic**.
+- A student is asked to explain preemptive/non-preemptive — **non-preemptive**: even if a higher-priority task is released, the currently running job never stops. **Preemptive**: a higher-priority task can preempt whichever lower-priority task is currently running (restating the same definition as Day 7 section 28.3). The professor notes this concept "seems to be from the reading material," confirming it isn't new.
+
+### 40.2 Defining static/dynamic and offline/online, and the example problem given to students
+
+- Before introducing the second pair, **static/dynamic** and **offline/online** are explained first (the professor: "these are very confusing concepts, so let me explain first"):
+  - **Static**: scheduling decisions are made based on **fixed** parameters, assigned before execution — meaning parameters that **don't change over time.**
+  - **Dynamic**: decisions are made based on **parameters that can change over time.**
+  - **Offline**: scheduling decisions are all made **before** task execution — for example, meaning the schedule is stored ahead of time as a **table.**
+  - **Online**: scheduling decisions are made **at runtime**, rather than being precomputed.
+- Students are given five minutes to think about whether "static/dynamic is the same as, or equivalent to, offline/online."
+
+### 40.3 "Why is this static?" using an example task set — a student's answer and the professor's follow-up question
+
+- After five minutes, an example scheduler (a table of tasks with fixed inter-arrival gaps) is put up, and students are asked first whether it's static or dynamic. A student answers "static," reasoning that **"the gap between tasks is already fixed — each task's inter-arrival gap differs, but the time until the next task runs is fixed."** The professor accepts this but **reframes it into a sharper question**: **"are all the parameters ready in advance, for every case?"** — that is, if it isn't a human deciding on the fly, but rather **the parameters themselves (or at least their order) stay fixed over time and are unaffected by anything like live measurement**, then that order is preserved, and the answer is **"offline."**
+
+### 40.4 "Offline is actually quite rare" — a counterexample using LLF (a spoken preview not on any slide, ⚠️)
+
+- The professor then draws an analogy — "there are agents everywhere in the market" — arguing that most schedulers that look offline are actually **online.** The reasoning: even knowing the arrival pattern in advance, **the full schedule often can't be generated at time zero**, so even though it looks offline, it's classified as **online**, since the schedule can't be fully laid out before activation.
+- As a concrete example supporting this argument, the professor mentions an algorithm that appears on **no slide** — one the STT rendered as **"LN, least-less inverse"** — which at every moment computes **"time-to-deadline minus remaining computation,"** a value called **laxity**, where **smaller laxity means higher priority** (e.g., at current time 3, with 3 remaining until the deadline and 1 remaining computation, laxity = 3 − 1 = 2). Because laxity keeps changing over time (at one moment the tasks' laxities might be 1, 2, 3, so the first runs first; at the next, they shift to 3, 1, so a different task runs), a scheduler applying this parameter is **online.**
+  - **⚠️ Note-taker's aside**: the name "LN, least-less inverse" as caught by the STT isn't standard terminology, but the definition given (time-to-deadline minus remaining execution time = laxity, smaller laxity means higher priority) matches the well-known real-time scheduling algorithm **LLF (Least Laxity First)** exactly. It hasn't been formally introduced by name this semester so far (the name LLF doesn't appear anywhere in the Note05 pp. 1–17 range covered up to this session), and the professor only mentions it briefly as an example to illustrate the "basic case," without covering it in depth — this is treated as a **forward-looking aside** likely to be covered formally in a later session, and nothing more is assumed beyond that.
+- Summarizing, "the offline case is actually very rare — the system would have to be simple enough that the schedule could just be written down on paper," noting that fully precomputed, time-based schedules like that aren't really applied in practice. This is followed by an example with **task 1 (period 4) and task 2 (period 6)**, showing how long the resulting schedule table gets (listing tasks 1 through 31) to drive home how impractical this approach is.
+
+### 40.5 "Can an open system be frozen in advance?" — an argument left unresolved
+
+- A student asks whether **"an open system can be defined by treating it like the same kind of problem and freezing all its schedules in advance."** The professor says "I'd say yes, but I need to see exactly what the problem is first," reconfirming that **"the crux of this is that, by definition, the schedule can already be laid out before activation"** — possible if the starting point at time zero is known, but this rests on the premise that **"this should be the actual case, not the worst case,"** which leaves a point that **can't be answered with certainty.** Saying, **"we're moving fast right now — I'll come back to this in more detail next time,"** the professor leaves this argument unresolved for this session.
+
+## 41. [Day 8] Optimal vs. Heuristic — defining optimality with respect to feasibility (matches Note05 pp. 15–16, an extended Socratic argument)
+
+### 41.1 What "optimal" usually means — minimizing cost / maximizing benefit, and the difficulty when both criteria are present
+
+- **The usual meaning of optimal**: minimize if it's a cost, maximize if it's a benefit — clear enough in the sense of "the largest achievable benefit, or the smallest achievable cost." But the question posed is **what happens when both are present together** (cost and benefit, or feasibility alongside some other optimization criterion)?
+- **Revisiting feasibility**: at this stage, a deadline has only two outcomes — **met, or missed.** There's no answer beyond that within this framework; minimizing cost or maximizing benefit is a **separate definition.**
+- **The interesting part**: even if there's a function trying to satisfy the optimal criterion, **there's no guarantee it succeeds** (no guarantee of actually minimizing cost or maximizing benefit) — "it's actually quite simple once you see it, and that's the interesting bit."
+
+### 41.2 Defining optimal with respect to feasibility — building the argument Socratically
+
+- Returning to feasibility, the definition that **a schedule is feasible if it misses no deadline** is reconfirmed, then the question "so what is optimal, then?" is posed again.
+- For an example task set A, if some scheduling algorithm produces a schedule with no missed deadlines — can that algorithm be called **optimal for that specific task set (A)**? The professor tentatively agrees: "I don't love phrasing it that way, but essentially, yes" — meaning this algorithm is "correct" for task set A.
+- The scope then widens to **multiple task sets (A, B, C, D) and multiple scheduling algorithms (1 through 5)**, marking feasibility for each in a table — extending to the question: **"if algorithm 1 always produces a feasible schedule for every task set, is that optimal?"**
+- **Trying to pin down an exact answer runs into difficulty**: sometimes just meeting the deadline is enough, other times finishing earlier than the deadline is desired (a "minimum-cost feasibility" perspective) — but **feasibility itself is just the minimum requirement of meeting the deadline**, and its function is effectively **0 or 1** (deadline met or not), which simplifies things.
+- **A first attempt at the final definition**: "satisfied" basically means no deadline miss at all — that's the basic notion of optimality. So, **a scheduler is optimal with respect to feasibility** if, whenever it misses a deadline for some task set, **no other scheduler in the world can meet all of that task set's deadlines either** — and conversely, **if someone else can meet them, this scheduler must be able to as well.** Since infinitely many task sets are possible, this relationship must hold for **every** task set — that's the definition of optimal with respect to feasibility.
+
+### 41.3 "Let me give a somewhat looser explanation" — reworking the argument, and the session's close
+
+- With several students struggling with this definition, the professor says, **"excuse me, I'm sorry — let me give a somewhat looser explanation,"** and reworks the same argument: the key point is that **both directions must hold**, whether the outcome is 1 or 0 (met or missed) — if someone achieves a 1 (meets it), this scheduler must be able to achieve a 1 too, and if this scheduler can't do it, **nobody** should be able to achieve that 1 either. If this symmetric relationship doesn't hold, it isn't optimal.
+- Near the end of the lecture, the professor sums up that **both "optimal" and "heuristic" basically mean "the best"** (though the session doesn't fully spell out how the two terms are actually distinguished, closing instead with the somewhat vague phrasing that it's "wanting to do it even in a case where you can't" as understood from context), confirms there are no questions, and ends the session. **Note**: this session effectively wraps up mid-discussion of "optimality criteria" (page 16), and never reaches page 18 onward on the catch-up deck (the classical scheduling policies FCFS and SJF) — despite what the recap document's session title ("FCFS, SJF, LLF") suggests, the actual stopping point is around page 17 (Optimality Criteria).
