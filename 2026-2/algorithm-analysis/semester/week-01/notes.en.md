@@ -526,3 +526,270 @@ function generateSchedule(k):
 **This is correct (it literally enumerates every case) but takes exponential time.** The instructor explained why in terms of *information passed between calls* rather than call count: the function itself is only called a linear number of times ($n,n-1,\dots,0$) — that part is fine. But the amount of information returned from one call to the next — the size of the set of schedules — is **exponentially large**, and that's the real reason this algorithm is inefficient.
 
 **The goal carried into the next lecture.** The instructor closed by posing the target for a better recursive algorithm: (1) the function shouldn't be called too many times, and (2) the actual size of the information passed between calls should also stay small — both are necessary before efficiency can even be hoped for. Class ran out of time here. **The solution itself is explicitly deferred to the next lecture — this note does not speculate on it.**
+
+---
+
+## Day 6 (2026-09-30) — Finishing the RNA Secondary Structure DP (Nussinov) and Transitioning to Shortest Paths
+
+> Source: recording STT transcript (`2026-09-30-algorithm-analysis-1`, EN/KO bilingual, processed via recap, ~45 minutes / 2698 seconds, `~/Projects/recap/web/data/results/2026-09-30-algorithm-analysis-1.json`). **There is a two-week gap between Day 5 (09-16) and this day (09-30).** At the start of the lecture, the instructor refers to "the recurrence relation we wrote towards the end of last session's makeup lecture," implying at least one makeup lecture happened during that gap at which the RNA secondary-structure problem's definition, its subproblem $\mathrm{OPT}(i,j)$, and a draft recurrence were already introduced — **that makeup lecture's content itself is not in this repo, so this note does not speculate on it**, and this session opens by restating and proving that recurrence from scratch. As always for this course (taught entirely on the whiteboard, with no slide deck), this entire section is recorded purely from what was actually said in the lecture audio.
+
+### A. Restating the Subproblem: $\mathrm{OPT}(i,j)$ and the Recurrence
+
+Given an RNA primary structure $b_1,\dots,b_n$, define $\mathrm{OPT}(i,j)$ as the maximum cardinality (number of base pairs) of a secondary structure on the subsequence from $b_i$ to $b_j$.
+
+Background the instructor pointed out: an earlier attempt defined subproblems as prefixes, which didn't work out. So the scope of the subproblem was expanded from prefixes to **any contiguous subsequence**, and that's what made writing the recurrence possible.
+
+**Lemma 1 (recurrence relation).** For all $i,j$ that are the starting and ending indices of some contiguous, non-empty subsequence of the primary structure,
+$$\mathrm{OPT}(i,j) = \max\Big(\ \mathrm{OPT}(i,j-1),\ \ \max_{\substack{i\le k\le j-4\\ b_k,\,b_j\text{ complementary}}} \big(\mathrm{OPT}(i,k-1)+\mathrm{OPT}(k+1,j-1)+1\big)\ \Big)$$
+interpreted under the convention $\mathrm{OPT}(i,i-1)=0$. The condition $k \le j-4$ is the no-sharp-turn condition.
+
+### B. Proof of Lemma 1 — Splitting on Whether $b_j$ Participates in a Pair
+
+*Proof.* Fix an arbitrary optimal secondary structure $S$ on $b_i,\dots,b_j$. The last base $b_j$ either participates in $S$ or it doesn't.
+
+- **Case 1 ($j\notin S$).** If $b_j$ participates in no pair of $S$, then $S$ itself is already a secondary structure on $b_i,\dots,b_{j-1}$, so — since $S$ achieves $\mathrm{OPT}(i,j)$ — we get $\mathrm{OPT}(i,j) = |S| \le \mathrm{OPT}(i,j-1)$. Conversely, any secondary structure on $b_i,\dots,b_{j-1}$ is also a valid secondary structure on $b_i,\dots,b_j$ (simply not using $b_j$), so $\mathrm{OPT}(i,j) \ge \mathrm{OPT}(i,j-1)$. Combining the two inequalities gives $\mathrm{OPT}(i,j) = \mathrm{OPT}(i,j-1)$.
+
+- **Case 2 ($j\in S$).** Let $k$ be the index of the base paired with $b_j$, so $(k,j)\in S$. By the definition of a secondary structure, $b_k,b_j$ must be complementary; by the no-sharp-turn condition, $k\le j-4$; and since $b_k$ must come from within the range $b_i,\dots,b_j$, also $k \ge i$. Conversely, if $b_k,b_j$ are complementary and $k$ lies in this range ($i\le k\le j-4$), then $(k,j)$ is an admissible pair for some solution — adding this pair and filling in appropriately around it yields a feasible structure.
+
+  Apart from $(k,j)$, the rest of $S$'s pairs cross neither each other nor $(k,j)$, so $S\setminus\{(k,j)\}$ splits cleanly into a secondary structure on $b_i,\dots,b_{k-1}$ and one on $b_{k+1},\dots,b_{j-1}$. If either piece weren't optimal for its own range, swapping it out for that range's optimal structure (while keeping $(k,j)$) would strictly increase the total cardinality, contradicting the optimality of $S$. So, under the assumption that an optimal solution containing $(k,j)$ exists, $S$'s two pieces are themselves optimal for their respective ranges, and
+$$\mathrm{OPT}(i,j) = \mathrm{OPT}(i,k-1) + \mathrm{OPT}(k+1,j-1) + 1.$$
+
+  Combining both cases shows that regardless of whether $j$ participates in $S$, the left-hand side $\mathrm{OPT}(i,j)$ equals one of the two right-hand-side terms, and furthermore every term appearing on the right-hand side is realizable by some actual (feasible) secondary structure. Together, these prove Lemma 1. $\blacksquare$
+
+### C. Checking the Boundary Condition — Does $\mathrm{OPT}(i,i-1)=0$ Break the Recurrence?
+
+A term of the form $\mathrm{OPT}(i,i-1)$ can only appear on the right-hand side when $j=i$ or when $k=i$ (the other candidate, $k=j-1$, never occurs, since it would violate the no-sharp-turn condition $k\le j-4$). Only these two cases need checking.
+
+- **Case $j=i$.** The left-hand side is trivially $0$ — a single base can't form a pair. On the right, no $k$ satisfies the required conditions, so the second term is $-\infty$, and the first term (by convention $\mathrm{OPT}(i,i-1)=0$) becomes the maximum — matching the left-hand side exactly.
+- **Case $k=i$.** This means $b_j$ pairs directly with $b_i$ itself, so $\mathrm{OPT}(i,j)$ should equal that one pair ($1$) plus the best achievable with the rest, $\mathrm{OPT}(i+1,j-1)$. Substituting $k=i$ indeed makes the $\mathrm{OPT}(i,i-1)$ term $0$, reducing the whole expression to $\mathrm{OPT}(i+1,j-1)+1$ — matching.
+
+So the convention $\mathrm{OPT}(i,i-1)=0$ keeps the recurrence valid in both cases where that term actually appears on its right-hand side.
+
+### D. Converting to Dynamic Programming — The Evaluation-Order Problem and Its Fix
+
+Standard DP design procedure: define the subproblem (done) → write the recurrence (done) → base case (§C's convention serves this role) → what remains is finding the right **order of evaluation**.
+
+For several earlier problems, simply running the two indices in increasing order (row-first or column-first) was enough — even for problems where $(i,j)$ depended on $(i-1,j),(i,j-1),(i-1,j-1)$. But here that's not so easy: running `for i = 1 to n, for j = i to n` naively, one of the first entries computed might be $(1,100)$, where pairing $j=100$ with $k=50$ requires $\mathrm{OPT}(51,99)$ — not yet computed.
+
+So the next question: does this recurrence, used as a plain recursive (not-yet-DP) algorithm, avoid infinite loops? Staring at the recurrence reveals that a call for a subsequence of length $\ell=j-i$ only ever makes calls on subsequences that are **strictly shorter**. So evaluating this recurrence **in increasing order of subsequence length** guarantees everything needed is already ready by the time it's referenced.
+
+The resulting loop structure:
+```
+for i ← 1, …, n do
+    M(i, i-1) ← 0
+for l ← 0, …, n-1 do        # l = j-i (length minus one)
+    for i ← 1, …, n-l do
+        j ← i + l
+        M(i, j) ← (recurrence, OPT replaced by M)
+```
+
+### E. An Extension to Recover the Choice — the $M,K$ Tables and a Traceback Function
+
+To recover not just the cardinality but the secondary structure itself, we record which choice produced the final value at each step.
+
+- Initialize $M(i,j)$ to $M(i,j-1)$ (the first option), and remember this choice by setting $K(i,j)\leftarrow 0$ (the index $0$ doesn't otherwise exist, so it serves as a sentinel for "didn't pair").
+- Then compare $M(i,j)$ against the second term, $\max_{k} \big(M(i,k-1)+M(k+1,j-1)+1\big)$. If the second term is larger, update $M(i,j)$ to that value and record the maximizing $k$ in $K(i,j)$.
+- Unlike the longest non-decreasing subsequence problem, this problem's subproblem definition doesn't need to be modified to force the last element's inclusion — it's already "any contiguous subsequence" — so the final answer is simply $M(1,n)$.
+
+**Function `OutputSecondaryStructure(i, j)`** — outputs a secondary structure on $b_i,\dots,b_j$ of cardinality $M(i,j)$:
+```
+function OutputSecondaryStructure(i, j):
+    if i > j: return                     # empty subsequence
+    if K(i, j) = 0:
+        OutputSecondaryStructure(i, j-1)                  # b_j participates in no pair
+    else:
+        k ← K(i, j)
+        output pair (k, j)                                # b_k and b_j form a pair
+        OutputSecondaryStructure(i, k-1)
+        OutputSecondaryStructure(k+1, j-1)
+
+# main: fill the M, K tables in §D's order, then call OutputSecondaryStructure(1, n)
+```
+
+### F. Proof of Correctness and Running-Time Analysis — $O(n^3)$
+
+**Theorem.** The above algorithm is correct and runs in $O(n^3)$ time.
+
+*Proof (correctness).* **Value correctness**: by induction on subsequence length $L$, $M(i,j)=\mathrm{OPT}(i,j)$. Since §D's order (increasing length) is used, every $M$ value referenced on the recurrence's right-hand side is already computed at that point, and by the induction hypothesis equals the true $\mathrm{OPT}$ value. So the whole sequence's maximum cardinality is, by definition, $\mathrm{OPT}(1,n) = M(1,n)$.
+
+**Output correctness**: that `OutputSecondaryStructure(i,j)` actually outputs a secondary structure on $b_i,\dots,b_j$ of cardinality $M(i,j)$ can likewise be shown by induction (§G generalizes this pattern). Since the main body's last line calls this function on $(1,n)$, a secondary structure whose cardinality equals the overall optimum is output for the whole sequence. $\blacksquare$
+
+*Running-time analysis.*
+- **Main body**: there are $n(n+1)/2 = \Theta(n^2)$ pairs $(i,j)$ with $i\le j$, and computing each entry considers a linear number of possible $k$ values to take the maximum, so $O(n)$ per entry. So the main body runs in $O(n^2)\times O(n) = O(n^3)$.
+- **Output function**: by induction on $L=j-i+1$, `OutputSecondaryStructure(i,j)` runs in $O(L)$ time. If $i>j$, constant time — the base case. Otherwise, if $K(i,j)=0$: constant time plus one recursive call on a strictly shorter subsequence ($O(L-1)$ by the induction hypothesis). If $K(i,j)\neq0$: constant time plus two recursive calls whose combined length is strictly less than $L$ (one pair is removed), so by the induction hypothesis their combined cost is $O(L)$. Either way the inductive step holds, so the whole function is $O(L)$. The initial call on $(1,n)$ is $O(n)$, absorbed into the main body's $O(n^3)$.
+- So **the overall algorithm runs in $O(n^3)$ time**.
+
+**The generalized pattern (the instructor's remark).** Whenever evaluating the recurrence once takes linear time, that evaluation happens a quadratic number of times, and initialization takes linear time — one can show, by induction, that a recursive output function on $(i,j)$ runs in $O(j-i+1)$ time, and combining these facts shows the overall algorithm runs in cubic time, as a general pattern.
+
+### G. Revisiting the DP Design Recipe
+
+Every DP algorithm seen so far shares the same framework: define the subproblem → write the recurrence (going back to slightly modify the problem definition if the recurrence can't be written) → find the right order of evaluation → repeatedly apply the recurrence to fill the table → read off the answer from the table.
+
+But different problems run into different issues, as the instructor pointed out — in one problem (longest non-decreasing subsequence), the problem definition itself had to be slightly modified (forcing the last element's inclusion) to decouple the subproblem from what's happening "outside," while in another (this RNA problem), more than one index was needed. **Note**: the "longest non-decreasing subsequence" problem and the "other problem discussed in lecture" the instructor compares against don't appear anywhere in this repo's Day 1–5 notes — they were likely covered during the two-week gap (e.g. in the makeup lecture), and this note does not speculate about their content.
+
+### H. Transitioning to the Shortest Path Problem — Notation and Dijkstra's Failure
+
+As a final example, the problem of shortest paths — which you may have seen in your data structures course — is revisited. What this example illustrates is what happens when the most natural recurrence relation you'd write contains a **circular dependency**, and how to get rid of it.
+
+**Problem statement (restated for consistent notation).** You're given a weighted directed graph. Let $N$ be the set of nodes, $A$ the set of arcs, and $c$ the arc cost function. Given an origin $S$ and destination $T$, find the shortest path from $S$ to $T$.
+
+Dijkstra's algorithm, which you may have seen in data structures, is no longer valid for this version of the problem — edge costs can be any rational number, including negative ones, and Dijkstra's algorithm crucially relies on the assumption that **all edge costs are non-negative**. A version of the algorithm that works without that assumption exists, but with time running short the instructor said he'd "check the appendix and add it back in later," ending the lecture at this point. **→ Picked up directly in Day 7 (10-02).**
+
+---
+
+## Day 7 (2026-10-02) — Finishing Bellman-Ford Shortest Paths, and Introducing Greedy Algorithms: Interval Scheduling
+
+> Source: recording STT transcript (`2026-10-02-algorithm-analysis-1`, EN/KO bilingual, processed via recap, `~/Projects/recap/web/data/results/2026-10-02-algorithm-analysis-1.json`). The raw recording runs 109 minutes, but roughly 11 minutes of ambient/break audio unrelated to the lecture were already filtered out during transcription/recap processing, so the paragraphs below are continuous, real lecture content (~75 minutes) — a short "break" is explicitly mentioned about two-thirds of the way through (see the end of §G). This picks up directly from Day 6's (09-30) cliffhanger (Dijkstra no longer valid under negative edge costs, deferred to an appendix). This course remains purely blackboard-taught with no slide deck, so this entire section, too, is recorded purely from what was actually said in the lecture audio.
+
+### A. Reintroducing Shortest Paths — Simplifying via Vertex Numbering, the No-Negative-Cycle Assumption
+
+Notation (as restated this day): let $V$ be the set of vertices, $A$ the set of arcs, $c$ the cost function on each arc, and given an origin $S$ and destination $T$, find the shortest path from $S$ to $T$. As already noted, costs can be negative, so Dijkstra's algorithm is no longer valid.
+
+**Additional assumption: no negative cycles.** Why is this needed — with a negative cycle, the shortest path may not even be well-defined. Example: going from $S$ to $T$ along some path costs $17$, but taking one loop around a negative-cost cycle along the way brings the cost down to $16$. In fact, no matter what number you name (e.g. $-10^9$), a path with strictly smaller cost can always be produced — looping the cycle more times makes it smaller still. So an $S$-$T$ path's cost can be made arbitrarily small, meaning the shortest path is **not well-defined**. For this reason, the input graph is assumed to have no negative cycle.
+
+**A (temporary) simplifying assumption.** Number the vertices so that all of them carry distinct integer labels from $1$ to $n$, with $S=1$ and $T=n$ in particular. Further, assume arcs only exist from a lower-numbered vertex to a higher-numbered one. **The numbering itself is without loss of generality** (it's just naming) — but "arcs only go low-to-high" is a genuine additional assumption.
+
+Under this numbering, define $\mathrm{OPT}(j)$ as the length of the shortest path from $1$ to $j$ (a prefix-style subproblem).
+
+- **Base case**: $\mathrm{OPT}(1) = 0$. This follows directly from the no-negative-cycle assumption — there's no way to leave vertex $1$ and return to vertex $1$ while incurring a strictly negative cost.
+- **Recurrence**: viewing the path from $1$ to $j$ as a sequence of decisions, enumerate all possibilities for the last decision (the last arc). For every incoming arc $(k,j)$, assuming it's the last arc used gives cost $\mathrm{OPT}(k)+c(k,j)$, and we take the minimum over all such $k$:
+$$\mathrm{OPT}(j) = \min_{k:\,(k,j)\in A} \big(\mathrm{OPT}(k) + c(k,j)\big).$$
+- **Evaluation order**: compute in increasing order of $j$. Thanks to the "low-to-high" assumption, every possible $k$ is always strictly smaller than $j$, so $\mathrm{OPT}(k)$ is already computed by that point.
+- **Final answer**: $\mathrm{OPT}(n)$.
+
+### B. The Circular Dependency Once the Assumption Is Dropped — the $A\to B\to C\to B$ Example
+
+Now drop the assumption that "arcs only go low-numbered to high-numbered." Arcs can now exist between any two vertices (e.g. an arc from vertex $5$ to vertex $2$).
+
+**The recurrence relation itself is still correct without this assumption.** The claim that $\mathrm{OPT}(j)$ equals the above expression only ever relied on "there must be some last arc on the shortest path, and I'm enumerating all its possibilities" — that reasoning never used the direction assumption at all. The assumption was only used afterward, when converting this into a DP algorithm (the "evaluation order" step of §A).
+
+**But now it's not just a matter of finding a good evaluation order — a genuine circular reference appears.** Concrete example: let vertices $A,B,C$ have arcs $C\to A$, $A\to B$, $B\to C$ forming a cycle. Computing $\mathrm{OPT}(B)$ requires $\mathrm{OPT}(A)$ (via the incoming arc $A\to B$); computing $\mathrm{OPT}(A)$ requires $\mathrm{OPT}(C)$ (via $C\to A$); and computing $\mathrm{OPT}(C)$ requires $\mathrm{OPT}(B)$ again (via $B\to C$). This isn't a matter of choosing a better evaluation order — you can't even write a terminating plain recursive algorithm using this recurrence. It simply enters an infinite loop.
+
+**An epistemological point (explicitly emphasized in lecture).** Defining $\mathrm{OPT}$ this way makes no reference to any algorithm computing it, and doesn't even suggest it can be obtained by an algorithm at all — it's simply, by definition, the length of the shortest path, and the recurrence relation itself (shown true in §A without needing an algorithm) is correct. The problem lies purely in **actually using this recurrence to compute** the values of $\mathrm{OPT}$. So the fix isn't a better evaluation order — it's modifying the subproblem definition itself.
+
+### C. Lemma 1 — the Shortest Path Can Always Be Chosen Simple
+
+The assumption is "no negative cycle," not "no cycle at all" — an input graph with a non-negative-cost cycle is still perfectly valid, and such inputs give rise to exactly the circular reference of §B when the recurrence is applied as-is. To eliminate it, first use the observation that there's an upper bound on the "size" (number of arcs) of the solution we're after.
+
+**Lemma 1.** If the graph has no negative cycle, there is a shortest $s$-$t$ path that is simple (visits no vertex twice), and hence a shortest path using at most $n-1$ arcs.
+
+*Proof.* Consider any non-simple $s$-$t$ path $P$. Being non-simple means some vertex appears at least twice on $P$. Taking the sub-path between two occurrences of that same vertex yields, by definition, a cycle, and by the no-negative-cycle assumption its cost is non-negative. Deleting it produces another $s$-$t$ path with strictly fewer arcs and cost no greater than before.
+
+Since the number of arcs on a path is finite, and each application of this process strictly decreases that number (and it can never go below $0$), the process must terminate after finitely many steps, arriving at a simple path. So for **any** $s$-$t$ path, there always exists a simple path whose cost is no greater — therefore, the shortest path can always be chosen to be simple. And since a simple path visits no vertex twice, it has at most $n-1$ arcs. $\blacksquare$
+
+### D. Redefining the Subproblem with an Extra Index, $\mathrm{OPT}(i,b)$, and Lemma 2
+
+Using Lemma 1's fact that the solution's size (number of arcs) is bounded, this bound is added as an extra index to the subproblem, eliminating the circular reference.
+
+To stay consistent with the textbook's notation, this time the subproblem fixes the **destination** instead: define $\mathrm{OPT}(i,b)$ as the length of a path from $b$ to $t$ using **at most $i$ arcs** (i.e., the best achievable under that restriction — not necessarily the true unrestricted shortest-path length).
+
+**Benefit 1.** By Lemma 1, plugging in $i=n-1$ is equivalent to having no restriction at all — every graph's shortest path can be taken to use at most $n-1$ arcs — so $\mathrm{OPT}(n-1,s)$ is exactly the true shortest-path length.
+
+**Benefit 2 (a first, flawed attempt).** Since the destination is now fixed, this time we must undo the path's **first** decision (its first arc) rather than the last. It might seem one can write: for the first arc $(b,w)$ out of $b$,
+$$\mathrm{OPT}(i,b) \overset{?}{=} c(b,w) + \mathrm{OPT}(i-1,w) \quad \text{(minimized over all } (b,w)\in A\text{)}.$$
+**This is wrong.** The reason: it assumes a path always has a "first arc," but if the optimal solution is the empty path (zero arcs — e.g. when $b=t$), there is no first arc at all — this assumes the existence of something that might not exist.
+
+**Lemma 2 (the corrected recurrence).** For all $i\ge1$, $b\in V$,
+$$\mathrm{OPT}(i,b) = \min\Big(\ \mathrm{OPT}(i-1,b),\ \ \min_{(b,w)\in A} \big(c(b,w)+\mathrm{OPT}(i-1,w)\big)\ \Big).$$
+
+*Proof.* Let $P$ be a shortest path from $b$ to $t$ using at most $i$ arcs (achieving $\mathrm{OPT}(i,b)$).
+- If $P$ in fact uses no more than $i-1$ arcs, $\mathrm{OPT}(i,b)$ simply equals $\mathrm{OPT}(i-1,b)$.
+- Otherwise (since this lemma is proven for $i\ge1$), $P$ uses exactly $i$ arcs, so it has at least one arc and we can speak of its first arc. Let $(b,w)$ be that first arc; the rest of $P$ (after removing this arc) must be a shortest path from $w$ to $t$ using at most $i-1$ arcs, so $\mathrm{OPT}(i,b) = c(b,w)+\mathrm{OPT}(i-1,w)$.
+
+Taking the minimum of the two cases proves Lemma 2. $\blacksquare$
+
+**Base cases.** $\mathrm{OPT}(0,t)=0$ (the zero-arc path from $t$ to $t$ is the empty path, length $0$). $\mathrm{OPT}(0,b)=+\infty$ for all $b\neq t$ (asserted without proof in the lecture — "I'll prove this properly later" — and not revisited in this session. This note does not speculate further).
+
+### E. The Bellman-Ford-Style DP Algorithm — Correctness, $O(n(n+m))$ Running Time, Path Retrieval
+
+```
+M(0, t) ← 0
+for b ∈ V \ {t}: M(0, b) ← +∞
+for i ← 1, …, n-1 do
+    for each b ∈ V do
+        M(i, b) ← min( M(i-1, b), min_{(b,w)∈A} (c(b,w) + M(i-1, w)) )
+return M(n-1, s)
+```
+
+**Correctness.** Induction on $i$. Every reference on the right-hand side uses index $i-1$, always strictly smaller, so by the induction hypothesis $M(i-1,w)=\mathrm{OPT}(i-1,w)$. Combined with Lemma 2, $M(i,b)=\mathrm{OPT}(i,b)$ for all $i,b$. Running the outer for loop in increasing order of $i$ is exactly what makes this induction valid. By Lemma 1, the final answer is $M(n-1,s)$.
+
+**Running time.** Let $n$ = number of vertices, $m$ = number of arcs. The outer for loop runs $n-1$ times. Instead of counting "time per inner-loop iteration times number of iterations," apply the same accounting used for DFS/BFS's $O(n+m)$ bound: within one outer iteration, each vertex gets a constant amount of bookkeeping, plus the total number of (directed) arcs considered across that whole iteration is exactly $m$ — each arc is considered exactly once — so one outer iteration costs $O(n+m)$. Over $n-1$ iterations, the total is
+$$O\big(n\cdot(n+m)\big).$$
+
+**Path retrieval (backtracking).** Start at $M(n-1,s)$ and trace which branch achieved it: if it was the $M(i-1,b)$ branch, move to $(i-1,b)$ with no new arc revealed; if it was the branch for some $w$, output the first arc $(b,w)$ and move to $(i-1,w)$. Repeat until reaching the base case $M(0,t)=0$, which marks the end of the path.
+
+### F. An In-Place, Index-Compressed Variant — the Real Bellman-Ford Algorithm
+
+§E's two-index version isn't actually used in practice — it's more complicated and uses more memory. The version that's actually used drops the index $i$ entirely and repeats the same update, in place, on a single array, $n-1$ times:
+```
+m[t] ← 0
+for b ∈ V \ {t}: m[b] ← +∞
+repeat n-1 times:
+    for each b ∈ V do
+        m[b] ← min( m[b], min_{(b,w)∈A} (c(b,w) + m[w]) )
+return m[s]
+```
+
+**Why this looks strange.** Every DP algorithm seen so far shared a natural property: once a table entry's value is set, it never changes again — this makes sense, since the whole point of DP is that each table entry should hold exactly the value of its defined subproblem, and once the right value is found there's no reason to change it. But this compressed version repeatedly overwrites entries of the same array — a real departure from DP's usual design principle.
+
+**Correctness (a parallel-simulation argument, informal).** Imagine running the compressed version and §E's two-index version side by side, comparing how values are updated.
+- After round $0$, the compressed version's values exactly match row $0$ of the two-index version.
+- In round $i$, the compressed version is "supposed" to reference row $i-1$'s values, but some of those entries may have **already been updated within this very round**. That is, it might accidentally reference the length of a path using up to $i$ arcs, rather than exactly $i-1$. Is that a problem? **No** — it's still referencing a genuinely valid path that exists in the graph, so it just means the algorithm "discovers" that path's cost a little **earlier** than the two-index version would; correctness is unaffected.
+- In general, after round $i$ finishes, $m[v]$ isn't guaranteed to equal exactly "the shortest path using at most $i$ arcs," but it is always guaranteed that **every path using at most $i$ arcs has already been considered**. Even if some paths using more than $i$ arcs were accidentally considered too, those are still valid paths in the graph, and the minimum is always taken over everything considered — so the value can never be wrong. So by the time $n-1$ rounds finish, it no longer matters whether paths with strictly more than $n-1$ arcs happened to be considered — by Lemma 1, the true shortest path uses at most $n-1$ arcs anyway.
+
+With a little extra care, the path itself can also be retrieved from this version (not covered in lecture; see the textbook). **This compressed version is what's called the Bellman-Ford algorithm.**
+
+### G. Revisiting the DP Design Framework, and Transitioning to Greedy Algorithms
+
+**Recap of the DP design recipe.** Given a problem: define the subproblem → write the recurrence based on that definition (going back to slightly modify the problem definition if the recurrence truly can't be written — this can take some back-and-forth) → provide a base case matching the definition (usually the easy part) → fill the table using the base case and recurrence, choosing the right evaluation order → read off the answer from the table.
+
+Different problems ran into different issues, with different tools to address them: (i) when the recurrence reveals coupling between the subproblem and "what's happening outside," slightly modify the problem definition to remove that coupling; (ii) sometimes simple prefixes of the original problem aren't enough, and a broader class of subproblems (e.g. arbitrary contiguous subsequences) is needed; (iii) as in this lecture's shortest-path example, when some dependency is in the way, bound the size of the solution and use that bound as an extra DP-table index to eliminate the dependency.
+
+[A short break occurred at this point.]
+
+**Transitioning to greedy algorithms (unnamed by the instructor at this point).** After the break, the lecture moved on to the next algorithm design methodology, introduced via the example of the **Interval Scheduling Problem**. (The term "greedy algorithm," used in the following sections' headings, is this note's own standard name for this design technique, added for the reader's benefit — the instructor himself had not yet named this methodology in this lecture.)
+
+**Problem description.** Suppose you manage a lecture room (e.g. at NDOM). You receive a number of requests — 8am–10am, 9am–6pm, noon–1pm, and so on. The goal is to serve as many **mutually non-overlapping (compatible)** requests as possible. If one interval's endpoint exactly coincides with another's start, that's considered compatible, not overlapping.
+
+**Formal definition.** Let $n$ be the number of requests (intervals), and $I=\{1,\dots,n\}$ the set of intervals. For interval $i$, let $s(i)$ be its start and $f(i)$ its finish, with $s(i)<f(i)$. Two intervals $i,j$ are **compatible** if $f(i)\le s(j)$ or $f(j)\le s(i)$. A set of intervals is compatible if every pair in it is. **Problem: given a set $I$ of $n$ intervals, find a compatible subset of maximum cardinality.**
+
+**A methodological contrast with DP (the instructor's meta-comment).** Under this design methodology, coming up with a plausible **candidate algorithm is comparatively easy**. This is the opposite of DP — there, finding the right subproblem definition and recurrence was hard, but once found, proving correctness was relatively easy (just induction, showing the algorithm's computed values match the already-defined subproblem solutions). Here, the hard part is reversed: figuring out whether a candidate is actually correct — proving it, or disproving it with a counterexample. Even repeatedly failing to find a counterexample can be a hint toward a proof — the repeated failure might mean it's genuinely impossible.
+
+### H. Two Failed Candidate Rules, and Their Lessons
+
+**Observation.** An interval that intersects no other interval at all (i.e., its starting time comes after every other interval's finishing time) must belong to **every** optimal solution, not just some particular one.
+
+**Candidate 1 (not even well-defined).**
+```
+R ← I; sol ← ∅
+while R ≠ ∅:
+    pick i ∈ R that intersects no other interval in R
+    sol ← sol ∪ {i};  R ← R \ {i}
+return sol
+```
+Problem: after the first iteration removes one interval, there can exist inputs where no interval remaining in $R$ intersects nothing else — the algorithm simply cannot proceed. In other words, this algorithm **isn't even well-defined** — it assumes the existence of something (such an interval) that might not exist. (A student's guess — that the issue is "not picking the 'more comfortable' interval among differently-sized overlapping options" — was explicitly dismissed by the instructor as not the real problem: an interval intersecting nothing else belongs to every optimal solution, not just a particular one, so that choice is always safe.)
+
+**Candidate 2 (well-defined, but wrong).** Since there may be no interval intersecting nothing, instead choose the interval that intersects the **fewest** others. The removal step also needs fixing — since an interval always intersects itself, removing an interval $i$ means removing **every** interval that intersects $i$, including $i$ itself.
+```
+R ← I; sol ← ∅
+while R ≠ ∅:
+    pick i ∈ R with the fewest intersections within R
+    sol ← sol ∪ {i};  R ← R \ { j ∈ R : j intersects i }
+return sol
+```
+This is now well-defined (there's always some interval with the minimum intersection count). But it's **disproved by a counterexample**: a concrete arrangement of seven intervals has intersection-degree counts, in order, $3,4,4,4,3,3,2$. In the first iteration, the algorithm picks the interval with $2$ intersections; once that choice is locked in, the remaining input permits adding at most two more, for a total of $3$. But the true optimal solution picks $4$ intervals — a contradiction, so this rule is wrong.
+
+### I. The Correct Rule — Choose the Interval with the Earliest Finishing Time
+
+**The key idea.** Instead of choosing the interval with the fewest intersections, choose the one with the **earliest finishing time**. The intuition for why this choice is "safe" (an exchange argument): no matter which interval some other optimal solution might have used in its place, substituting in the earliest-finishing interval leaves the room free **the earliest and the longest** afterward — so whatever that other optimal solution intended to do from then on remains achievable even after this substitution.
+
+**Algorithm 3** (the third version, following candidates 1 and 2):
+```
+R ← I; sol ← ∅
+while R ≠ ∅:
+    pick i ∈ R with the smallest finishing time f(i)
+    sol ← sol ∪ {i};  R ← R \ { j ∈ R : j intersects i }   # including i itself
+return sol
+```
+
+**This algorithm does turn out to be correct** (for the intuitive reason above — this choice leaves the room free longer than any other possible choice). However, **turning this observation into a formal proof was explicitly deferred to the next lecture** — the class ran out of time right at this point, with no particularly clean stopping point, but that's where the lecture ended. **This note does not speculate on the proof that hasn't yet been given.**
