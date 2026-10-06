@@ -408,3 +408,88 @@ $$
 - **Connection back to the photon-polarization experiment (previewed)**: this inner product is exactly the operation that gives the amplitude in the photon-polarization experiment — given some photon polarization state, the probability with which it collapses onto a particular basis vector is determined by this inner product. In other words, that amplitude is essentially the inner product between two vectors.
 - The plan is to work through this inner product with real vectors first, connect it back to the photon-polarization experiment, and then move on to complex vector spaces.
 - **A complex vector space can no longer be drawn on a plane**: even a "2D" vector has two scalars, and each scalar (being complex) has two real dimensions (real and imaginary parts), so it effectively becomes **four-dimensional**. As a result, this vector — the qubit — ends up living on a **sphere** rather than a plane, as previewed. The instructor closed the session by acknowledging things are "getting a bit more complicated, but we'll go one step at a time."
+
+## Day 7 (2026-09-23) — Bra-Ket Notation and Inner Products, Deriving the Bloch Sphere, Formalizing Complex Numbers for Quantum Computing
+
+> Source: not a lecture recording but a dialogue transcript (`2026-09-23-quantum-computer-programming-1.json`, titled "Bra-Ket Notation, Inner Products & the Bloch Sphere," about 50 minutes / 2974 seconds). After correcting the voice-to-slide alignment in the catch-up prep material (`quantum-computer-programming/w01-d2`), this session actually spans roughly pages 127–155 (the recap of last time — vector bases, bra-ket notation, inner products; the instructor explicitly says he's "moving on quickly," so almost none of it has a dedicated slide match) and pages 157–171 (Section 4.4, "The Bloch Sphere" — the full derivation, which is most of the session) of the revised, now-185-page deck (`ch01_qcp_v4a.pdf`). The two slides the instructor directly points back to during the derivation — "slide C104" and "slide 103" — use the deck's pre-revision (171-slide) page numbers; converted to the current 185-page PDF, they land on page 107 ("The Phase of a Complex Number") and page 106 ("Euler's Formula" visualization) respectively — not Section 4.1's "Complex Numbers for Quantum Computing" (pages 88–104 in the current PDF), but the Euler's-formula/phase slides much further on. That section is never re-taught in this session's transcript, so this note does not cover Section 4.1 separately.
+
+### 1. Recap — A Non-Orthogonal Basis Example, and Why We Only Use Orthonormal Bases
+
+- Recap from last time: if basis vectors are linearly independent and complete (i.e., they span the space), their linear combinations can build every vector in the vector space. Up to now the focus had specifically been on orthonormal bases — vectors that are mutually orthogonal and of unit length.
+- Student question: aren't non-orthogonal vector spaces possible too? Yes. Example in $\mathbb{R}^2$: two vectors that are not orthogonal to each other but are still linearly independent and span $\mathbb{R}^2$ (a horizontal vector and a second one closer to vertical) — combining the two still reaches everywhere on the plane.
+- So why aren't we interested in such bases? Two reasons:
+  1. The basis-change trick only works for an orthonormal basis.
+  2. The rule that the amplitudes' norms squared must sum to one at measurement, and the fact that measurement is the projection of the state vector onto a basis vector — i.e., an inner product — also only holds for an orthonormal basis.
+- So for everything of interest in quantum computing we always use orthonormal bases, but mathematically, a basis need only satisfy the definition of a vector space (linearly independent + spanning) — a non-orthogonal basis is perfectly valid, just not useful "for us."
+
+### 2. Bra-Ket Notation — a Bra Is the Adjoint of a Ket
+
+- The inner product is an important concept that will keep coming up today and next week. Reconfirmed that the (ordinary) dot product doesn't work in a complex vector space, which is why this new inner product concept was introduced.
+- **Ket**: just a symbolic name for a vector. For example, $(1,0)$ and $(0,1)$ — the standard basis vectors of $\mathbb{R}^2$ (or of the Hilbert space) — are simply written $|0\rangle$ and $|1\rangle$. The notation exists purely for convenience, since writing $|\psi\rangle$ is much faster than writing out the full vector.
+- **Bra**: for every ket there's a corresponding bra — an angle bracket pointing the other way (left). Applying the **adjoint** operation (transpose followed by conjugate) to a ket vector $(c_1,c_2)^T$ gives its bra: the transpose turns the column vector into a row vector, and the conjugate is then taken of each entry of that row vector.
+- Corresponding to the vector space the kets live in (e.g., a qubit's Hilbert space), there is a separate **dual vector space** where the bra vectors live — every ket vector has a corresponding bra vector, and that too is a vector space.
+
+### 3. Computing the Inner Product and the Norm of a Vector
+
+- Given vectors $v,w$, placing a bra and a ket side by side is essentially a row-vector-times-column-vector matrix multiplication. Writing it with a single vertical bar instead is the more compact notation for the inner product, $\langle v|w\rangle$.
+- The computation is almost identical to the dot product, with the one difference being that the bra's entries are conjugated — i.e., you multiply the conjugated entries of the row vector by the plain entries of the column vector and sum (in sum notation, $\sum_i \bar v_i w_i$).
+- Why this matters: the inner product of a vector with itself, $\langle v|v\rangle$, is needed as the length metric. It is always a real number greater than or equal to zero (a complex number times its own conjugate gives $x^2+y^2$, always real) — so the length (norm) of a vector is defined as the square root of the inner product: $\lVert v\rVert=\sqrt{\langle v|v\rangle}$.
+
+### 4. How Do We Visualize a Quantum State? — The Problem of Four Degrees of Freedom, and the Bloch Sphere
+
+- Recap: in the two-dimensional Hilbert space, a qubit is the linear combination $|\psi\rangle=\alpha|0\rangle+\beta|1\rangle$ ($\alpha,\beta$ complex). How can this be visualized?
+- Because they're complex numbers, it can't just be drawn on a whiteboard — each complex number has two degrees of freedom (real and imaginary parts on the complex plane). $\alpha=x+iy$ alone gives two degrees of freedom, and $\beta=a+ib$ gives two more — already four degrees of freedom from the two amplitudes.
+- This is exactly where the **Bloch sphere** comes in: such a linear combination (any quantum state) can be visualized as a point on a sphere (something like a soccer ball) — more precisely, as a vector from the origin to a point on the sphere.
+- **Limitation**: the Bloch sphere only works for a single qubit. With two qubits you could use two spheres to some extent, but the moment the two qubits become **entangled**, the Bloch sphere no longer works — it's a geometric visualization tool for a single qubit only.
+- **An important caveat**: this sphere visualization has nothing to do with how a real qubit is physically implemented (superconducting qubit, trapped ion, photon, electron spin, etc.) — those physical realizations are independent of the Bloch sphere visualization. The visualization is purely a geometric way to understand the qubit logically.
+- **Classical-bit analogy**: just as we think of a classical bit conceptually as 0 or 1 without worrying about whether it's implemented with CMOS transistors, old-style relays, or punch cards — logically it's 0/1, and the physical implementation is a separate matter — the Bloch sphere likewise does not mean a photon is literally "round."
+
+### 5. An Overview of the Four Steps to the Bloch Sphere Mapping
+
+- The mapping from four degrees of freedom (two complex amplitudes) to a point on the sphere (two degrees of freedom, $\theta,\varphi$) doesn't follow immediately — it essentially requires four steps, which the instructor previewed as a roadmap:
+  1. **The normalization constraint**: the two amplitudes' norms squared must sum to one — this always holds since these are measurement probabilities.
+  2. **Removing the global phase**: reduces the degrees of freedom from 4 to 3 — the global phase carries no physical information (removing it and measuring still gives the same probability).
+  3. The fact that the vector is always unit length reduces the degrees of freedom from 3 to 2.
+  4. The remaining two degrees of freedom are expressed as two angles, $\theta,\varphi$ — these become the spherical coordinates of a point on the unit sphere. (Cartesian coordinates in $\mathbb{R}^3$ need three numbers, but a point on the surface of a sphere needs only two, since the radius is fixed at 1.)
+- With this mapping in hand, you can intuitively understand the probabilities of measuring a given state, or what happens when an operation is applied to it (single-qubit operations are all rotations — moving the state from one point to another on the sphere) — rather than just being told a Hadamard gate "is applied," you can actually see why the state moves the way it does on the sphere.
+- The instructor's comment: there aren't many sources that walk through this derivation — from the superposition state to the Bloch sphere — step by step (to physicists it seems too obvious, and they typically just say "here's the superposition state, here's a sphere, they fit together"). Two references were mentioned: a YouTube video by **Professor Jochen Rau** in Germany (linked from the slide bibliography), and the textbook by **Professor Janowski** (with some additional clarification added by the instructor).
+
+### 6. Derivation (1) — Splitting via Euler's Representation and Removing the Global Phase
+
+- Starting point: $|\psi\rangle=\alpha|0\rangle+\beta|1\rangle$, with the normalization condition from Born's rule, $\lVert\alpha\rVert^2+\lVert\beta\rVert^2=1$.
+- Each amplitude is split using Euler's formula (the instructor directly pointed to "slide C104" — using the deck's pre-revision numbering; page 107 in the current PDF, "The Phase of a Complex Number" — to confirm this): $\alpha=r_0 e^{i\varphi_0}$, $\beta=r_1 e^{i\varphi_1}$ ($r_0,r_1$ real, the absolute values of $\alpha,\beta$ respectively).
+- Substituting gives $|\psi\rangle=r_0e^{i\varphi_0}|0\rangle+r_1e^{i\varphi_1}|1\rangle$ — still four degrees of freedom ($r_0,\varphi_0,r_1,\varphi_1$), nothing gained yet.
+- **Removing the global phase**: multiplying a quantum state by a unit-length complex number leaves it physically unchanged (same measurement probabilities) — using this property, both sides of the equation are multiplied by $e^{-i\varphi_0}$ (a unit-length complex number taken from the phase of the first amplitude). Since $e^{-i\varphi_0}\cdot e^{i\varphi_0}=e^{0}=1$, that phase cancels.
+- Result: $|\psi\rangle = r_0|0\rangle + r_1e^{i(\varphi_1-\varphi_0)}|1\rangle$ — the complex part of the first term vanishes entirely, leaving just $r_0$ (real), while the second term is left with only the phase difference $e^{i(\varphi_1-\varphi_0)}$ (exponents add under multiplication).
+- This is called **"killing the global phase"** — to be covered in more detail next week, but for now accompanied by a "just trust me" aside (only confirming that this operation does not physically change the state as far as what's measurable on the quantum computer). Combining $\varphi_1-\varphi_0$ into a single parameter $\varphi$ leaves three parameters: $r_0,r_1,\varphi$.
+
+### 7. Derivation (2) — Constraining $r_0,r_1$ via Normalization, and Parameterizing with $\theta$
+
+- Substituting the Euler representations into the normalization condition $\lVert\alpha\rVert^2+\lVert\beta\rVert^2=1$: the norm squared of a product is the product of the norms squared of its factors, and a number of the form $e^{i\theta}$ always sits on the unit circle (norm squared 1), so what's left is simply $r_0^2+r_1^2=1$.
+- Since a modulus is always greater than or equal to zero, $r_0,r_1\in[0,1]$.
+- Since spherical coordinates require two angles, $r_0,r_1$ are reparameterized with a single angle $\theta$: $r_0=\cos(\theta/2)$. Why $\theta/2$? Because $\cos$ is monotonically decreasing on $[0,\pi/2]$ ($\cos 0=1\to\cos(\pi/2)=0$), so $|\alpha|$ and $\cos(\theta/2)$ can be invertibly mapped back and forth.
+- As $\theta$ ranges from $0$ to $\pi$, $\cos(\theta/2)$ is chosen to only use the range from $1$ down to $0$ (not venturing into negative territory beyond that). To satisfy the normalization condition $r_0^2+r_1^2=1$, $r_1=\sin(\theta/2)$ (since $\cos^2+\sin^2=1$ for any angle).
+- Substituting this in: any pure qubit state can always be written, using just two angles $\theta,\varphi$, in the form:
+$$
+|\psi\rangle=\cos\frac{\theta}{2}|0\rangle+\sin\frac{\theta}{2}\,e^{i\varphi}|1\rangle
+$$
+The only remaining complex number is $e^{i\varphi}$ (since cosine and sine of a real angle are themselves real). This representation maps one-to-one onto the Bloch sphere.
+
+### 8. Coordinates on the Bloch Sphere — the Geometric Meaning of $\theta$ and $\varphi$
+
+- $\theta$ ranges from $0$ to $\pi$, and $\varphi$ ranges from $0$ to $2\pi$ (the usual range for a complex number's angle — going all the way around the unit circle, $2\pi$ is the same as $0$).
+- $\theta$: the angle between the vertical (z) axis and the state vector. If the state vector points straight up (the positive z-axis), $\theta=0$; as $\theta$ grows it becomes horizontal at $\pi/2$ (90°), and continuing to grow, it points straight down at $\pi$ (180°).
+- $\theta$ alone doesn't fully determine the state — a whole circle of states can share the same $\theta$ (say, 45°). So a second angle, $\varphi$, is needed: project the state vector straight down onto the x-y plane (the floor), draw a line from the origin to that projected point, and the angle between that line and the x-axis is $\varphi$.
+- If $\varphi=0$, the projected point lands on the x-axis; as $\varphi$ grows, it rotates counterclockwise toward the y-axis — at 90° it's on the negative y-axis, at 180° back on the x-axis, at 270° in yet another direction, and at 360° back where it started.
+- Because the sphere has unit length (every vector has modulus 1), these two angles alone are enough to fix any point on the sphere (Cartesian coordinates in $\mathbb{R}^3$ need three numbers, but on the surface of a sphere with a fixed radius, two suffice).
+
+### 9. Concrete Examples — $|0\rangle$ (North Pole), $|1\rangle$ (South Pole), and Antipodal Points
+
+- **Where $|0\rangle$ sits**: getting $|0\rangle$ requires $\cos(\theta/2)=1$, i.e., $\theta=0$ — the angle between the vertical axis and the state vector is zero. So $|0\rangle$ sits exactly at the **north pole** of the Bloch sphere. Since $\sin(\theta/2)=0$ here, the $|1\rangle$ term vanishes entirely, and because the vector points straight up, $\varphi$ doesn't matter at all (rotating around the vertical axis doesn't change the vector).
+- **Where $|1\rangle$ sits**: at $\theta=\pi$, $\sin(\theta/2)=1$ and $\cos(\theta/2)=0$ — the $|0\rangle$ term vanishes, leaving just $e^{i\varphi}|1\rangle$. This leftover $e^{i\varphi}$ is again a global phase and can be eliminated, leaving exactly $|1\rangle$. So $|1\rangle$ sits at the point on the Bloch sphere diametrically opposite $|0\rangle$ (the **south pole**).
+- **Antipodal points**: $|0\rangle$ and $|1\rangle$ are the two orthogonal basis vectors of the Hilbert space (computing the inner product gives zero), and on the Bloch sphere they also sit at opposite ends (north and south pole) — points positioned exactly opposite each other like this are called **antipodal points**. It turns out that, in general, any two orthogonal states on the Bloch sphere are antipodal (more examples to follow).
+
+### 10. Q&A — When Exactly Is It Okay to Remove the Global Phase?
+
+- **Student question**: (pointing at the leftover $e^{i\varphi}$ factor from the $|1\rangle$ derivation) this seems to depend only on $\theta$, but that factor is still sitting there — since the norm is always one, doesn't it work out the same for everyone upon observation, making it a non-issue?
+- **Instructor's answer**: we need to be careful here. As stated, it's a global phase, so for the purposes of **visualization** it can be omitted or eliminated. But as will be shown next week, **if you remove the global phase and then continue calculating with that state, you actually get a different result**. So the global phase can only be eliminated **when performing a measurement or just visualizing the state** — not if you're going to continue calculating with it. The instructor acknowledged this was a good point — that vector (the phase factor) really is needed, and it couldn't simply be eliminated the way it might first appear.
