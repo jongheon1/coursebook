@@ -726,3 +726,258 @@ Parameter server를 사용한다고 가정할 때, GPU(워커) 한 대당 필요
 - **GPipe의 핵심 정리**: micro-batch들이 파이프라인에 순차적으로 투입되고, GPU 1이 micro-batch 2를 처리하는 동안 GPU 2는 micro-batch 1을 처리할 수 있는 식으로, micro-batch 개념 덕분에 GPU들이 대부분의 시간 동안 바쁘게 작동한다. 순전파의 병렬 처리와 역전파의 병렬 처리가 pipeline bubble을 줄여준다.
 - 이제는 드디어 이것을 진짜 **parallelism** 과정이라고 부를 수 있다 — 주어진 타임스텝에서 여러 GPU가 동시에 작동하고 있어서 GPU utilization이 크게 올라갔기 때문이다. 나이브한 version 0과 비교하면 흰 여백 대부분이 채워진 것을 확인할 수 있다.
 - **다음 주 예고**: GPipe를 개선하려는 여러 개념들을 다룰 예정이다. 철학은 동일하다 — 여전히 micro-batch 개념을 사용하지만, GPU utilization을 더 높이는 더 효율적인 방법들을 찾는 것.
+
+---
+
+## Day 8 (2026-09-30) — GPipe 심화: Memory, Communication과 1F1B로의 전환
+
+> 소스: 2026-09-30(수) 강의 녹음 dialogue 전사(`2026-09-30-distributed-learning-and-inference-1.json`, t=0~3035, paragraph 단위 {t, en, ko}). Day 7과 마찬가지로 이 dialogue 전사에만 근거하며, 슬라이드 원본(페이지 번호 등)은 별도로 확인하지 않았다 — "(p.NN)" 형태의 페이지 인용은 달지 않는다. 이번 시간은 Day 7에서 끝내지 못한 GPipe를 마무리한다: micro-batch 복습 → forward/backward 진행 재확인 → 4-GPU/4-micro-batch 업데이트 단계와 mini-batch SGD와의 동등성 → parameter memory·peak activation memory 분석 → GPU별 activation memory 소멸 패턴 → 통신 패턴 → micro-batch 개수 $K$의 트레이드오프 → GPipe 성능 결과·핵심 메시지 정리, 그리고 마지막으로 1F1B(One Forward, One Backward)로의 전환부.
+
+### 73. 복습: Day 7에서 멈춘 지점 — Naive Pipeline의 문제와 GPipe의 핵심 아이디어
+
+- 강의를 시작하며, 혹시 잊은 사람들을 위해 지난 시간(Day 7) 내용을 3분 요약: pipeline parallelism은 모델을 여러 GPU에 복제하는 data parallelism과 달리, 모델을 **레이어 단위로 여러 머신에 나누는** 방식이고, 각 stage(머신)에는 여러 레이어가 포함될 수 있다.
+- 가장 단순한(naive) 방식 — 순전파를 전부 한 다음 역전파를 하는 것 — 은 parameter memory와 activation memory를 많이 줄여주지만, 특정 시점에 오직 하나의 GPU만 작동하기 때문에 진짜 병렬 처리가 아니고, GPU 활용률이 매우 낮다.
+- 이 문제를 완화하기 위해 Day 7에서 GPipe를 소개했지만 완전히 끝내지 못했다 — 오늘 이어서 마무리한다. **GPipe의 핵심 아이디어는 micro-batch 개념의 도입**이며, 이후에 나올 1F1B 등 나머지 방법들도 모두 이 micro-batch를 그대로 활용한다 — GPipe는 나머지 방법들의 토대이고, GPipe를 제대로 이해하면 나머지를 이해하는 데 훨씬 적은 노력이 든다.
+
+### 74. GPipe의 Forward 단계 재복습 — Micro-batch로 GPU 동시 작동시키기
+
+- 전체 mini-batch를 그대로 GPU 0에 넣는 대신, mini-batch를 여러 개의 micro-batch로 나눈다 — 왜 그렇게 하는가? **GPU들을 동시에 일하게 만들기 위해서다.** Mini-batch를 나누지 않으면 전체 mini-batch가 GPU 0에서 처리된 뒤에야 GPU 1이 순전파를 시작할 수 있다.
+- Micro-batch를 쓰면: GPU 0이 micro-batch 0의 순전파를 끝내는 즉시 다음 micro-batch의 처리를 시작할 수 있고, 동시에 다음 GPU는 micro-batch 0의 순전파 출력을 받아 자신의 순전파를 진행한다 — 이 신호는 GPU 1로, 그다음 GPU 2로 전달되고, 그사이 GPU 0은 다음 micro-batch를 시작한다. 이런 방식으로 여러 GPU를 동시에 일하게 만든다.
+- 이 forward 과정이 진행되는 특정 시점에 GPU 활용률이 극대화된다. 그 이후 각 GPU(특히 가장 먼저 forward를 끝낸 GPU)에는 두 가지 선택지가 생긴다 — 그 micro-batch에 대한 역전파를 바로 시작할 수도 있고, 다음 micro-batch에 대한 순전파를 계속할 수도 있다.
+
+### 75. GPipe의 설계 선택 재확인 — All-forward-then-all-backward
+
+- **GPipe가 하는 일은 모든 micro-batch에 대해 순전파를 먼저 끝낸 다음에야 역전파를 시작하는 것**이다. 순서대로 micro-batch 0, 1, 2, 3의 순전파를 모두 끝내면, 마지막 GPU는 각 micro-batch에 대한 최종 출력(손실 등)을 보관하고 있다가, 모든 순전파가 끝난 뒤에야 역전파를 시작할 수 있다.
+- 역전파에서도 전체 mini-batch를 한 번에 쓰지 않는다 — **여전히 micro-batch 개념을 유지하면서, 순전파와 같은 철학으로 역전파를 수행한다.** 역전파 때도 micro-batch를 쓰지 않으면, 순전파에서 개선했던 활용률을 역전파에서 다시 잃게 된다.
+- 역전파가 진행되는 특정 시점에 다시 GPU 활용률이 극대화되고, 이후 역전파가 마무리된다(Day 7의 ramp-up/ramp-down 타임스텝 표가 보여준 패턴 그대로다). 강의에서는 25페이지(모든 GPU가 순전파 수행), 23페이지(처음 두 GPU만 순전파), 31페이지(모든 GPU가 역전파 수행) 같은 슬라이드 페이지를 가리키며 이 패턴을 재확인했다 — 다만 이 노트는 슬라이드 원본을 따로 확인하지 않았으므로 이 페이지 번호 자체를 근거로 쓰지는 않는다.
+- 학습 과정의 끝에서는 역전파를 수행하는 GPU 수가 2개 → 1개 → 0개로 줄어들며 역전파가 마침내 끝나고, 그 후 업데이트 단계가 이어진다.
+
+### 76. GPipe의 Update 단계 — 4-GPU/4-Micro-batch 예시와 Mini-batch SGD와의 동등성
+
+- 4개의 GPU와 4개의 micro-batch로 구성된 예시로 업데이트 과정을 설명: 그래디언트 계산이 끝나면 업데이트 단계가 이어진다. 단순화를 위해 **모든 GPU가 동시에 업데이트를 수행**한다고 하면, GPU $i$에서 계산된 그래디언트 $g_i$를 바탕으로 각 GPU가 경사하강법을 수행한다 — 사실상 이게 전부이고, 매우 단순한 과정이다. 다른 optimizer(SGD, SGD with momentum, Adam 등)를 쓰고 싶다면 같은 방식으로 적용할 수 있다.
+- **$g_i$는 무엇인가**: GPU $i$에서 계산된 그래디언트다. 각 GPU $i$에서는 그래디언트가 서로 다른 micro-batch 전체에 걸쳐 계산된다는 점을 기억해야 한다 — 예를 들어 GPU 0에서는 micro-batch 0, 1, 2, 3을 모두 사용해 그래디언트를 계산하고, GPU 1에서도 마찬가지로 micro-batch 0, 1, 2, 3을 사용해 그래디언트를 계산한다. 그래서 각 GPU는 결국 (자신이 담당하는 모델 부분에 대해) 네 개의 서로 다른 그래디언트를 얻게 된다.
+- **실제로 쓰는 그래디언트는 micro-batch별로 얻은 그래디언트들의 평균**이다. micro-batch 크기가 모두 같다고 가정하면, 이는 **하나의 특정 mini-batch를 그대로 사용해 모델을 업데이트하는 것과 정확히 동일**하다 — 즉 micro-batch를 도입해도 결과 자체는 바뀌지 않고, 오직 GPU 활용률과 효율성만 달라진다(data parallelism에서도 이미 같은 현상을 봤다 — 실제로 동등한 결과를 얻는다는 점에서).
+- 각 micro-batch 그래디언트의 평균을 구한 뒤에는, 그 평균 그래디언트 위에 원하는 어떤 optimizer든(SGD, SGD with momentum 등) 그대로 적용할 수 있다.
+
+### 77. Parameter Memory는 변화 없음 — Naive Pipeline과 GPipe 비교
+
+- 학습 과정을 다뤘으니, 이제 memory 질문: 이 두 방식(naive pipeline vs. GPipe)을 비교했을 때 parameter memory와 activation memory는 어떻게 달라지는가?
+- **두 방식의 모델 분할 방식 자체는 완전히 동일하다** — 유일한 차이는 micro-batch 도입 여부뿐이다. 따라서 **parameter memory는 전혀 변하지 않는다**: 어느 쪽이든 각 GPU는 동일한 모델 조각과 동일한 그래디언트를 보관해야 하기 때문이다. Naive pipeline과 GPipe 사이에서 parameter memory는 실질적으로 변하지 않는다.
+- 그렇다면 **peak activation memory**는 어떨까 — 이것이 다음 질문이다.
+
+### 78. Peak Activation Memory 도출 — $B$, $\alpha$, $\alpha_i$, $K$ 표기
+
+- **GPU별 activation memory 비교(재확인)**: centralized training에서는 모든 모델 파라미터를 보관하고 전체 mini-batch($B$개 샘플)를 사용하므로, activation memory는 $B \times \alpha$다(여기서 $\alpha$ = 샘플 하나당 전체 모델의 activation 개수). Naive pipeline의 경우 모델을 여러 부분으로 나누므로 각 GPU에는 몇 개의 레이어만 할당되고, 이는 처리되는 activation 개수가 크게 줄어든다는 뜻이다 — mini-batch 크기 자체는 변하지 않지만, activation memory는 $B \times \alpha_i$가 된다(여기서 $\alpha_i$ = GPU $i$에 할당된 모델 부분의 activation 개수). GPU당 activation memory가 크게 줄어드는 건 쉽게 상상할 수 있는 결과다.
+- **GPipe의 경우**: GPipe는 mini-batch를 $K$개의 micro-batch로 나누기 때문에 각 순전파 단계에서 처리하는 샘플 수를 $B/K$로 줄여준다(여기서 $K$ = micro-batch 개수). 순전파와 역전파 모두 매 단계마다 이 동일한 $B/K$개의 샘플을 사용해 수행한다.
+- **비교**: naive pipeline에서는 순전파·역전파 모두 매번 $B$개의 샘플을 사용했다. 블록 하나만 고려하면 처리하는 샘플 수를 $B/K$로 줄였으니 activation memory도 그만큼 줄어들 것처럼 보이는데 — 그런데 **역전파를 수행하려면 순전파 과정에서 이미 계산해 둔 activation을 그대로 써야 한다**(2주차 강의노트의 activation memory 개념과 동일). 즉 순전파 중 계산된 activation은 버리지 않고 저장해 두어야, 나중에 역전파에서 사용할 수 있다.
+- **그런데 GPipe는 모든 micro-batch의 순전파를 먼저 다 끝낸다**: 순전파 중 계산된 activation은 그에 대응하는 역전파를 수행하기 전까지 버릴 수 없다 — 예를 들어 micro-batch 0의 activation은 그 역전파를 하기 전까지 버릴 수 없다. 그런데 GPU 0은 micro-batch 0뿐 아니라 micro-batch 1, 2, 3에 대해서도 나중에 역전파를 해야 하므로, 그 세 micro-batch와 관련된 activation도 함께 저장해야 한다.
+- **합산**: micro-batch 0에 대해 $\alpha_i \times (B/K)$, micro-batch 1에 대해 $\alpha_i \times (B/K)$, … 이렇게 $K$개의 micro-batch 각각에 대해 저장해야 하므로, 이 GPU가 저장해야 하는 총 activation 양은
+  $$\alpha_i \times \frac{B}{K} \times K = \alpha_i \times B$$
+  이고, 여기서 $K$가 약분되어 사라진다. 즉 **각 단계에서 처리하는 샘플 수는 줄였지만, GPU는 여전히 모든 micro-batch에 대한 activation을 저장해야 하므로, GPU당 peak activation memory는 naive pipeline과 정확히 동일**하다($\alpha_i \times B$).
+- 더 일반화하면: GPU는 동시에 저장되는 micro-batch의 **최대 개수**만큼 activation을 들고 있어야 하는데, GPipe에서 모든 GPU가 동시에 저장해야 하는 micro-batch의 최대 개수는 $K$이므로, 이 $K$가 다시 약분되어 사라지고 결과는 동일해진다.
+
+### 79. 왜 Peak Activation Memory가 줄지 않는가 — GPU별 Activation 소멸 순서
+
+- **질문**: 4개의 GPU 중 어느 GPU의 activation memory가 가장 먼저 줄어드는가? **답: GPU 3(마지막 GPU)**. 모든 순전파가 끝난 시점에는 모든 GPU의 activation memory가 아직 동일하지만, GPU 3이 가장 먼저 역전파를 시작하므로 그 activation memory가 가장 먼저 줄어들기 시작하고, 아직 역전파를 시작하지 않은 다른 GPU들은 계속 자신의 activation을 저장하고 있어야 한다. 이후 GPU 2, GPU 1, 마지막으로 GPU 0 순으로 줄어든다.
+- **임의의 시점 예시**: GPU 3과 GPU 2가 이미 역전파를 끝냈다고 하면, 더 이상 중간 activation을 저장할 필요가 없으므로 이 둘의 activation memory는 0이다. 반면 GPU 1은 세 번째 micro-batch에 해당하는 activation을 여전히 저장해야 하고, GPU 0은 두 번째와 세 번째 micro-batch 모두에 관련된 activation을 저장해야 한다 — 이 시점에서 GPU 0이 가장 큰 activation memory를, GPU 1이 그다음을 가진다.
+- **핵심 규칙**: 특정 micro-batch에 대한 역전파가 끝나면, 그 micro-batch에 대응하는 activation memory는 더 이상 필요하지 않다. 예컨대 GPU 1은 micro-batch 0의 역전파가 이미 끝났다면 그 입력 activation을 저장할 필요가 없고, GPU 2는 micro-batch 0과 1의 역전파가 끝났다면 그 둘의 activation을 저장할 필요가 없으며, GPU 3은 micro-batch 0, 1, 2의 역전파가 끝났다면 그 셋의 activation을 저장할 필요가 없지만, 아직 역전파하지 않은 나머지 micro-batch들의 activation은 계속 저장해야 한다.
+- **결론**: 그럼에도 불구하고 (§78에서 본 것처럼) **peak(최댓값) activation memory 자체는 naive pipeline과 GPipe 사이에 변화가 없다** — micro-batch로 나누더라도 GPU는 여전히 $K$개의 micro-batch 전부에 대한 activation을 동시에 저장해야 하는 시점이 존재하기 때문이다. GPipe가 주는 이점은 **특정 시점에서의** activation memory를 줄여주는 것뿐이지, peak 자체를 줄이지는 못한다 — 이 둘의 구분이 중요하다(2주차 강의노트의 activation memory 개념을 명확히 이해하고 있으면 이 구분을 받아들이기 쉽다).
+
+### 80. 통신 패턴 — Activation만 전송, 모델·Optimizer State는 전송되지 않음
+
+- 분산 환경이므로 항상 통신을 고려해야 한다. Data parallelism에서는 모델(또는 그래디언트)이 parameter server로 전송되거나 여러 GPU 간에 공유됐다. **Pipeline parallelism에서는 무엇이 공유되는가** — data parallelism과 달리 **모델은 더 이상 전송되지 않는다.** 대신 **입력 activation, 즉 중간 activation(intermediate activation)만 전송**된다.
+- 모델 partition 자체는 고정되어 있지만, 순전파 과정에서는 이 activation 신호를 다음 GPU로 전송해야 하고, 역전파 과정에서는 역전파 신호를 이전 GPU로 전송해야 한다. 이 정보의 크기는 mini-batch 크기 혹은 micro-batch 크기에 비례한다고 생각할 수 있다 — 그래서 단순히 mini-batch 크기를 늘리면 통신량도 늘어난다. GPipe의 경우에도 결국 전체 mini-batch에 대한 모든 정보를 전송하게 되므로, 통신량은 처리하는 샘플 수에 어느 정도 비례한다.
+- **핵심 요약**: 모델은 전송되지 않고, optimizer state도 전송되지 않는다 — **샘플 수에 비례하는 activation 정보만 통신된다**(data parallelism에서는 모델 크기 $m$에 비례하는 정보가 통신됐던 것과 대조된다).
+
+### 81. Micro-batch 개수 $K$ 선택의 트레이드오프
+
+- 질문(지난주에도 나왔던 질문): micro-batch 개수는 어떻게 설정해야 하는가? 앞의 예시에서는 GPU 4개, micro-batch 4개로 $K$ = GPU 수였는데, $K$를 더 작게(예: 3) 혹은 더 크게 설정하면 어떻게 되는가?
+- **하한**: 일반적으로 **micro-batch 개수는 GPU 수와 같거나 그보다 커야 한다** — $K$가 GPU 수보다 작으면 모든 GPU가 동시에 일하는 시점이 전혀 생기지 않는다.
+- **$K$를 늘릴 때의 장점**: $K$를 계속 늘리면 GPU 활용률이 좋아진다 — 유휴(idle) 구간이 줄어든다.
+- **$K$를 너무 늘릴 때의 단점(워크드 예시)**: mini-batch에 샘플이 100개 있다고 하자. 5개의 micro-batch로 나누면 micro-batch당 20개의 샘플이지만, 극단적으로 100개의 micro-batch로 나누면 micro-batch당 샘플 1개씩 처리하게 된다.
+  1. **연산 효율 저하**: 각 순전파·역전파 단계마다 샘플 하나씩만 처리하면 단계 수는 늘어나지만, 행렬곱(matrix multiplication)은 더 큰 배치로 처리하는 것이 효율적이므로 GPU 내부의 연산 효율이 오히려 떨어진다.
+  2. **통신 호출 횟수 증가**: 전체 처리 샘플 수는 100개로 동일하므로 총 통신량(전송되는 정보의 총량) 자체는 같지만, 훨씬 더 자주 통신해야 한다 — micro-batch가 100개면 순전파·역전파를 끝내는 데 100번의 통신이 필요하지만, micro-batch가 4개뿐이면 4번의 통신만 필요하다. 통신 **호출 횟수**가 크게 늘어난다.
+- **결론**: $K$를 너무 작게도, 너무 크게도 잡아서는 안 된다 — GPU 수보다 크게, 적절한 수준으로 설정하면 된다(강의에서는 이후 예시로 $K = 2N$($N$ = GPU 수)인 경우도 다룰 것이라고 예고했다).
+
+### 82. GPipe의 성능 결과와 핵심 메시지 정리 (Google, NeurIPS 2019)
+
+- **성능 결과**: GPipe 원 논문(NeurIPS에 발표됨)의 비교표를 인용 — naive 접근법과 (GPipe 기반) pipeline parallelism을 비교하면, pipeline parallelism이 naive 접근법보다 **더 큰 모델을 수용(지원)할 수 있다.**
+- **GPipe의 핵심 메시지**: micro-batch를 기반으로 학습을 병렬화하며, 이는 (1) GPU 활용률을 높이고, (2) 그 결과 학습 속도를 높이며, (3) 특정 시점에서의 activation memory를 줄여준다. 하지만 **naive 버전에 비해 peak activation memory를 줄이지는 못한다** — 이 구분(특정 시점의 activation memory 감소 vs. peak activation memory 불변)을 정확히 짚어야 한다.
+- GPipe는 **"all forward, then all backward"**(모든 순전파를 먼저 끝낸 뒤에만 역전파 시작)라는 관점으로 요약할 수 있다.
+- **GPipe의 남은 문제**: 여전히 유휴(idle) 구간이 많다 — 모든 순전파를 먼저 끝내고 그다음 모든 역전파를 수행하기 때문에 큰 병목이 생긴다. 이는 학습의 순차적(sequential) 특성 때문인데, 순전파가 끝나기 전에는 역전파를 시작할 수 없기 때문이다. 그 결과 peak activation memory도 최적이 아닐 수 있다 — 모든 GPU가 여전히 모든 micro-batch의 activation을 저장해야 하기 때문이다.
+- 다음에 다룰 접근법은 micro-batch 개념을 활용해 일부 순전파와 역전파의 **순서를 바꿔서**, GPipe보다 peak activation memory를 줄이려고 시도한다.
+
+### 83. 1F1B로의 전환 — Forward/Backward 순서를 바꿔 Activation Memory를 더 줄이는 아이디어
+
+- 8개의 micro-batch를 쓰는 다른 예시(앞서 다룬 4개 micro-batch 예시의 상위 버전)로 다시 살펴본다 — 상단 부분은 지금까지 다룬 GPipe 스케줄과 정확히 같고, 유일한 차이는 micro-batch가 4개가 아니라 8개라는 점이다. 순전파와 역전파 블록의 크기가 다르게 그려지는데, 이는 **역전파가 순전파보다 더 많은 연산을 요구하는 실제 상황을 반영**한 것이다(이후 예시에서는 역전파가 순전파의 2배 시간이 걸린다고 가정).
+- 이 예시에서도 문제는 동일하다 — 모든 순전파를 먼저 하고 그다음 모든 역전파를 하기 때문에 여전히 유휴 구간이 많고, peak activation memory도 실질적으로 줄지 않는다(모든 GPU가 8개 micro-batch 전체의 activation을 저장해야 하므로).
+- **순서를 바꾸는 아이디어**: 당연히 어떤 micro-batch의 순전파가 끝나기 전에는 그 역전파를 할 수 없다. 하지만 **특정 micro-batch(예: micro-batch 1)의 순전파가 끝난 시점 이후로는, 언제든 그 micro-batch에 대한 역전파를 시작할 수 있다** — 반드시 그 뒤 micro-batch들의 순전파를 다 끝낼 필요는 없다. 그래서 두 번째 micro-batch의 순전파를 하는 대신, 먼저 끝난 micro-batch(첫 번째)에 대한 역전파를 먼저 수행하는 선택지가 생긴다.
+- 이는 Day 7(§69)에서 GPU 3이 순전파를 끝낸 뒤 맞닥뜨렸던 **두 가지 선택지**(다음 micro-batch의 순전파를 계속할지, 방금 끝난 micro-batch의 역전파를 바로 시작할지)를 다시 상기시킨다. GPipe의 선택은 전자(모든 순전파를 먼저 끝내는 것)였다.
+- **1F1B의 아이디어**: 해당 GPU의 다음 순전파를 멈추고, 대신 **방금 끝난 micro-batch의 역전파를 먼저 수행**해서 activation memory를 줄이자는 것 — 이것이 다음 시간(Day 9)에 본격적으로 다룰 **1F1B(One Forward, One Backward)**의 핵심 아이디어다.
+- 강의는 금요일(9/25, 휴일)이 지나 다음 주로 넘어가며, pipeline parallelism 개념을 "이번 금요일"(=다음 수업)에 마무리하겠다고 예고하며 끝났다 — GPipe를 미리 이해해 두면 나머지 내용(1F1B 등)도 쉽게 이해할 수 있을 것이라는 당부와 함께.
+
+---
+
+## Day 9 (2026-10-02) — Pipeline Parallelism 마무리(1F1B, ZBPP)와 Tensor Parallelism 도입
+
+> 소스: 2026-10-02(금) 강의 녹음 dialogue 전사(`2026-10-02-distributed-learning-and-inference-1.json`, t=0~6004, paragraph 단위 {t, en, ko}). Day 7·8과 마찬가지로 이 dialogue 전사에만 근거하며, 슬라이드 원본은 별도로 확인하지 않았다 — "(p.NN)" 형태의 페이지 인용은 달지 않는다. 이번 시간은 전반부(~55분)에서 Day 7–8의 pipeline parallelism을 완결(1F1B의 interleaving 버전, Zero-Bubble Pipeline Parallelism 포함)하고, 후반부(~40분)에서 완전히 새로운 주제인 tensor parallelism을 도입한다. **Tensor parallelism은 이 레포의 예습 챕터(`weeks/`)에 아직 해당 주차가 만들어지지 않았다** — 교수가 쓴 "Tensor Parallelism & Hybrid Parallelism" 슬라이드 덱을 이번 시간 처음 다루는 것이며, 이 노트가 현재로서는 이 주제에 대한 유일한 기록이다. 후반부 내용은 row-split 예시까지만 다루고, column-split 및 다층(multi-layer) 비교는 다음 주 수요일로 명시적으로 이월됐다.
+
+### 84. 운영 공지 — 다음 금요일(한글날) 휴강, 오늘 출석 체크 없음
+
+- 강의 시작과 함께 공지: 다음 주 금요일(10/9, 한글날)은 휴강이며, 그때까지 쉰다. 교수는 오늘(10/2, 금)이 (음성 전사상 "양보전"이라 들리는, 정확한 지칭은 불명확한) 어떤 행사의 전날이라 개회식에 가보고 싶었지만, 그러면 지난주 추석에 이어 이번 주와 다음 주(한글날)까지 3주 연속으로 수업을 쉬게 되는 셈이라 수업을 하기로 했다고 밝혔다.
+- 녹화 영상은 올릴 예정이지만, 개인 일정 때문에 수업을 빠지는 것이 마음에 걸려 수업은 그대로 진행하기로 했고, **오늘은 출석 체크를 하지 않는다.**
+
+### 85. 복습: Day 8에서 멈춘 지점과 1F1B의 핵심 아이디어
+
+- Day 8(지난 시간)에서 멈췄던 지점을 다시 확인: GPipe는 모든 micro-batch의 순전파를 먼저 다 끝낸 뒤에야 역전파를 시작하는 방식이었다. GPipe에는 몇 가지 문제가 있었고, **1F1B는 그 문제들 중 일부를 완화하려는 방법**이다.
+- **가장 쉽게 보이는 첫 번째 문제는 activation memory 문제**다 — 특정 micro-batch에 대해 순전파를 하고 나면, 그 micro-batch의 역전파가 끝날 때까지 관련 activation 값들을 계속 저장하고 있어야 하기 때문이다.
+- 8개의 micro-batch로 나눈 예시를 다시 봄: 8개 전부의 순전파가 끝난 시점에는, 모든 디바이스가 그 8개 전부에 대한 중간 activation 값을 저장하고 있어야 한다 — 그래서 그 시점의 peak activation memory는 크고, 역전파가 시작되면서부터 비로소 줄어들기 시작한다.
+
+### 86. 1F1B가 Activation Memory를 줄이는 패턴 — 디바이스별 비교
+
+- 디바이스별로 보면 activation memory 요구량이 줄어드는 패턴을 확인할 수 있다: 디바이스 1의 경우 최대 peak activation memory가 micro-batch 4개 정도에 해당하는데, 그 이후에는 micro-batch 1에 대한 역전파를 시작하므로 activation memory가 줄었다가 늘었다가 다시 줄었다가 하는 식으로 반복된다.
+- Peak activation memory가 micro-batch 8개에 해당하던 GPipe와 비교하면, 1F1B에서는 최대가 4개뿐이다. 극단적인 경우인 디바이스 4는 micro-batch 딱 하나에 대한 peak activation memory만 저장하면 되는데, 순전파가 끝나자마자 바로 그 역전파를 하기 때문이다. 즉 **디바이스별로 peak activation memory가 상당히 다를 수 있다.**
+
+### 87. 1F1B Notation과 4-GPU/8-Micro-batch 워크드 예시
+
+- 디바이스 4개(GPU 0~3), micro-batch 8개로 구성된 예시로 메커니즘을 자세히 설명한다. $F_{ij}$는 GPU $i$에서 micro-batch $j$에 대해 수행하는 순전파를 뜻한다(예: $F_{00}$ = GPU 0에서 micro-batch 0에 대한 순전파). 첫 번째·두 번째·세 번째 micro-batch는 각각 다른 색으로 표시된다.
+- **진행 과정**: micro-batch 0을 입력하면 그 정보가 다음 GPU로 전달되고, GPU 0은 이어서 micro-batch 1을 시작한다. 새로운 micro-batch가 계속 투입되면서 순전파가 이어지는데, **여기까지는 GPipe와 완전히 동일**하다.
+- **GPipe와 갈라지는 지점**: GPU 3이 자신의 micro-batch 0에 대한 순전파를 끝내고 나면, 두 가지 선택지가 있다 — (1) 다음 micro-batch(micro-batch 1)의 순전파를 계속하는 것, (2) 곧바로 역전파로 들어가는 것. **GPipe의 전략은 (1)**이었다 — GPU 3이 micro-batch 1의 순전파를 계속 진행.
+- **1F1B는 (2)를 택한다**: 다음 micro-batch의 순전파를 하는 대신, GPU 3이 방금 순전파를 끝낸 그 micro-batch(micro-batch 0)의 역전파를 바로 수행한다. 이때 GPU 3에 이미 도착해 있는 micro-batch 1의 순전파 신호는 받긴 받지만 바로 처리하지 않고 **일단 보류**한다 — GPU 3이 먼저 micro-batch 0의 역전파를 하기로 정했기 때문이다.
+
+### 88. Backward가 Forward보다 2배 느리다는 가정 하의 파이프라인 진행
+
+- 한 가지 중요한 점: **역전파는 보통 순전파보다 시간이 더 오래 걸린다.** 이 예시에서는 역전파가 순전파보다 약 2배 시간이 걸린다고 가정하여, 역전파를 나타내는 블록을 순전파 블록보다 2배 넓게 그린다(순전파 1 타임스텝 : 역전파 2 타임스텝).
+- 그래서 다음 타임스텝에서도 GPU 3은 여전히 역전파를 하고 있고, 다른 GPU들에서는 순전파가 계속 진행된다. 그동안 GPU 3은 이미 micro-batch 1, 2에 대한 순전파 신호를 받았지만 아직 처리하지 못한 상태다 — 여전히 micro-batch 0의 역전파를 하고 있기 때문이다.
+- GPU 3의 micro-batch 0 역전파 신호가 GPU 2로 전달되고 나서야, GPU 3은 마침내 micro-batch 1의 순전파를 시작할 수 있다 — 사실 이 정보는 꽤 오래전에 이미 받아 둔 것이다. 여러 타임스텝 동안 역전파에 묶여 있어서, 이미 받아둔 micro-batch 신호를 늦게서야 처리하게 된다. **디바이스 4(GPU 3)의 순전파가 실제로 데이터를 받은 시점보다 늦게 일어나는 이유가 이것이다.**
+- 이후 패턴: 마지막 GPU에서는 순전파가 끝나면 바로 그 micro-batch의 역전파를 수행한다 — 첫 번째 micro-batch의 순전파가 끝나면 다음 타임스텝에 바로 그 역전파를 시작하고, 그 타임스텝에는 역전파만 진행되며 이후에도 이런 식으로 역전파가 이어진다. 한편 GPU 3은 아직 micro-batch 2, 3에 대한 순전파를 하지 못했으므로, 다음 타임스텝에서는 GPU 1이 micro-batch 0의 역전파를 하고 그 신호가 GPU 2로 전달되어 GPU 2가 micro-batch 2에 대한 순전파를 하는 식으로 계속 진행된다.
+- **1F1B의 핵심 아이디어**: 특히 마지막 디바이스의 마지막 micro-batch부터, 순전파 한 번과 역전파 한 번을 번갈아 한다(그래서 이름이 "One Forward, One Backward"). 이것이 가능한 이유는, 특정 micro-batch의 순전파가 끝나면 그 뒤 micro-batch들의 순전파를 다 기다릴 필요 없이 바로 그 역전파를 시작할 수 있기 때문이다. 핵심 아이디어가 이것이고, 가장 큰 장점은 **activation memory를 줄이는 것**이다.
+
+### 89. 왜 이렇게 배치하는가 — Q&A: 남은 Micro-batch의 Forward를 더 일찍 하지 않는 이유
+
+- **질문**: mini-batch를 8개의 micro-batch로 나눴는데, 왜 micro-batch 5, 6, 7, 8의 순전파를 더 일찍, 심지어 병렬로 시작하지 않는가?
+- **답: 메모리 문제다.** micro-batch 5~8의 순전파를 더 일찍 해버리면, 그만큼 중간 activation을 더 많이 저장해야 해서 activation memory가 늘어난다 — 이는 GPU당 activation memory를 줄이기 위한 전략이므로, 일부러 그렇게 하지 않는 것이다.
+- 그래서 각 디바이스가 동시에 저장해야 하는 micro-batch의 **최대 개수는 4**다(3으로 줄었다가 다시 4로 늘고, 다시 3으로 줄고 하는 패턴이 반복된다). 이 순전파를 더 일찍 하더라도 **학습 속도(완료 시점)가 빨라지는 것은 아니다** — 전체 과정이 끝날 수 있는 가장 빠른 시점은 결국 micro-batch 8이 끝나는 시점에 묶여 있기 때문이다. 즉 더 일찍 해도 끝나는 시점은 바뀌지 않고, peak activation memory만 더 쓰게 될 뿐이다.
+- 추가 Q&A: micro-batch 3, 4의 순전파를 더 뒤로 미루고 GPU 2개나 3개만 동시에 쓰면 peak memory를 더 줄일 수도 있는가? **답: 그렇다, 가능하다** — 뒤에서 다룰 예시(ZBPP)에서도 일부 연산을 더 뒤로 옮겨 peak activation memory를 더 줄이는 모습을 보게 된다.
+
+### 90. GPipe vs. 1F1B 비교표 — Parameter Memory는 불변, Peak Activation Memory는 GPU별 차등 감소
+
+- **Parameter memory**: 어떤 pipeline 전략을 쓰든(naive, GPipe, 1F1B) 똑같다 — 같은 모델을 같은 방식으로 나눠서 배치하는 것이므로, 파라미터·그래디언트·optimizer state에 필요한 메모리는 전략에 상관없이 동일하다.
+- **Activation memory는 다르다**: centralized training에서는 전체 activation 크기 $\alpha$(모델 전체)를 고려해야 했다. Naive pipeline에서는 GPU $i$가 $\alpha_i$(자신에게 할당된 모델 부분의 activation 크기)만 쓴다. **GPipe는 naive pipeline과 GPU당 peak activation memory가 똑같았다**(§78–79에서 본 대로, 모든 순전파를 먼저 끝내고 그다음 모든 역전파를 하는 방식이기 때문).
+- **1F1B(버전 1)에서는 peak activation memory가 줄어든다** — 다만 그 감소량이 GPU마다 다르다: 이 예시(4-GPU/8-micro-batch)에서는 디바이스 1은 절반으로, 디바이스 4는 8분의 1까지 줄어든다.
+- **일반화**: peak activation memory는 (micro-batch 하나당 activation memory) $\times$ (동시에 저장해야 하는 micro-batch 개수)이고, 이 개수는 GPU마다 다르다. 이 예시에서 동시에 저장해야 하는 micro-batch 수는 어떤 GPU는 4개, 다른 GPU도 4개, 마지막 GPU는 1개다 — 이 숫자가 바로 감소량을 결정한다.
+- **정리**: GPipe가 "모든 순전파 후 모든 역전파"였다면, 1F1B는 (특히 마지막 디바이스 관점에서) **순전파 한 번, 역전파 한 번을 반복**하는 방식으로 볼 수 있다.
+
+### 91. 1F1B의 한계 — Completion Time은 그대로, 인터리빙(Interleaving) 버전 예고
+
+- 지금까지는 activation memory에 관한 이야기였다. 그런데 그림을 비교해 보면, **완료 시간(completion time)은 실제로 줄지 않는다** — 디바이스 1이 역전파를 끝내는 시점은 GPipe 때와 똑같다. Activation memory를 줄이는 건 분명 좋은 일이지만, **학습 속도 자체를 줄여주지는 못한다.**
+- Activation memory 감소는 확실히 좋지만, 거기에 더해 학습 시간까지 줄일 방법이 있다면 더 좋을 것이다 — 그래서 1F1B에 남은 질문은 **"학습 시간을 더 줄일 수 있는가?"**이다.
+- 실제로 1F1B 논문에는 두 가지 버전이 있다: 첫 번째 버전이 지금까지 설명한 것이고, **두 번째 버전은 인터리빙(interleaving)을 도입**한다.
+
+### 92. Interleaving — Chunk 개념과 두 개의 서브 파이프라인
+
+- 인터리빙을 이해하려면 먼저 **"chunk"**가 무엇인지 정의해야 한다. 지금까지의 전략은 예를 들어 레이어가 8개 있다면 순서대로 할당해서, GPU 1은 항상 앞쪽 레이어를, GPU 2와 3은 중간 레이어를, GPU 4는 마지막 레이어를 맡는 식이었다.
+- **인터리빙의 아이디어**: 전체 모델을 두 개의 chunk로 나눈다 — 예를 들어 레이어 1~4를 첫 번째 chunk, 레이어 5~8을 두 번째 chunk로. 각 GPU에 큰 레이어 블록 하나를 통째로 할당하는 대신, **더 작은 chunk 여러 개를 나눠서 할당**한다.
+- 당장은 장점이 잘 안 보일 수 있는데, 기본 아이디어는 **두 개의 파이프라인을 따로 만드는 것**이다 — 하나는 파란색 chunk들을 연결하는 파이프라인, 다른 하나는 초록색 chunk들을 연결하는 파이프라인. 순전파로 보면 레이어 4의 출력이 레이어 5의 입력이 되고, 레이어 8에서 순전파가 끝나며, 역전파도 같은 방식으로 진행된다.
+- 이렇게 두 개의 파이프라인이 만들어지면, 그림은 더 복잡해 보이지만 **이 스킴을 더 정교하고 유연하게 만드는 것**이 의도다 — 이제 선택지가 더 많아진다(레이어 1의 순전파, 레이어 5의 순전파, 레이어 1의 역전파, 레이어 5의 역전파 중 어느 것이든 할 수 있다). 더 작은 chunk를 가지므로, (기존에는 비어 있었던) 빈 공간들을 더 유연하게 채울 수 있어서 **버블이 줄고 학습 시간이 감소**한다.
+- **단점**: 이 방식은 훨씬 많은 통신을 요구하므로 통신 횟수가 늘어난다 — 즉 항상 실용적이라고 말할 수는 없다. 그래도 일부 실용적인 응용에는 도움이 될 수 있고, 좋은 학회에 발표된 아이디어다(교수는 작년 수업에서 chunk를 어떻게 나눠야 하는지 질문이 나와서 인터리빙에 관한 슬라이드 두 장을 추가했다고 언급).
+
+### 93. Interleaving의 Layer 할당 전략 — 인접 레이어를 피하는 이유
+
+- Chunk는 다음과 같이 할당된다: GPU 1은 레이어 1과 5를, GPU 2는 레이어 2와 6을 갖는 식(GPU 수를 $p$라 하면, 레이어 $i$와 레이어 $i+p$를 같은 GPU에). 다른 방식으로 묶는 것도 생각해볼 수 있는데, 예컨대 GPU 1이 레이어 1과 8을, GPU 2가 레이어 2와 7을 갖는 식이다.
+- **왜 인접하지 않은 레이어로 묶는가**: 만약 GPU 1이 레이어 1과 8(모델의 양 끝)을 갖는다면, 순전파는 GPU 1에서 시작해서 GPU 2로 전달되고 레이어 3부터 8까지 거친 뒤 역전파가 시작된다. 그런데 GPU 1의 다음 chunk가 레이어 8이므로, 순전파 신호가 레이어 8까지 도달할 때까지(즉 적어도 모든 micro-batch의 순전파가 끝날 때까지) 기다려야 한다 — **결국 GPU 1은 처음과 끝에만 바쁘고 중간에는 오랫동안 쉬게 된다.**
+- **인터리빙의 레이어 할당 아이디어는 바로 이런 불균형을 피하는 것**이다 — 각 GPU의 연산을 더 균형 있게, 더 연속적이고 고르게 배분해서 어떤 GPU도 오랫동안 쉬지 않게 한다. 그래서 레이어 $i$와 레이어 $i+p$($p$ = GPU 개수)처럼 **서로 인접하지 않은 레이어를 같은 GPU에 할당**한다 — 목표는 모든 GPU를 거의 모든 타임스텝에서 바쁘게 유지해 유휴 시간을 최소화하고 처리량(throughput)을 최대화하는 것, 즉 각 GPU가 어느 시점에서나 비슷한 양의 연산을 수행하도록 하는 것이다.
+- 하나의 micro-batch가 GPU에서 끝나면 곧바로 다른 micro-batch가 도착해서 순전파나 역전파를 시작할 수 있게 함으로써, 작업 부하를 균형 있게 만들고 버블을 줄인다. 이것이 **인터리빙을 적용한 1F1B**다.
+- 인터리빙을 이해했다고 해도 "이것이 최선의 전략인가, 성능을 더 개선할 수 있는가"라는 의문은 늘 남는다 — 실제로 다룰 내용이 두 가지(ZBPP와 tensor parallelism) 더 남아 있다. 다만 인터리빙은 꽤 복잡했으므로, 뒤에 나올 ZBPP를 이해하는 데는 인터리빙을 잠시 잊어도 된다고 명시적으로 언급됐다 — 1F1B 자체(순전파와 역전파의 순서를 바꾼 것)만 이해하면 충분하다.
+
+### 94. Zero-Bubble Pipeline Parallelism(ZBPP) 도입 — Backward를 B(grad w.r.t. input)/W(grad w.r.t. weight)로 재분할
+
+- 다음으로 넘어가는 방식은 **zero bubble pipeline parallelism(ZBPP)**이다. 핵심 아이디어: 빨간 박스로 표시된 역전파를 **다시 두 단계로 더 나눈다.**
+- 1·2주차 강의노트에서 이미 본 내용을 상기: 역전파는 두 단계로 나뉠 수 있다. 순전파는 단순하지만, 역전파는 (1) 역전파 신호를 받아 **그래디언트를 직접 계산**하는 단계와, (2) 이전 레이어로 전달해야 할 **다음 역전파 신호**(= 그 레이어 입력에 대한 손실의 미분값)를 계산하는 단계로 나뉜다 — 이전 레이어는 이 신호를 받아야 자신의 그래디언트를 계산할 수 있다.
+- **Notation**: 그래디언트를 계산하는 단계를 $W$(weight에 대한 그래디언트), 다음 역전파 신호를 계산하는 단계를 $B$(input에 대한 그래디언트)라고 표시한다 — $F$는 변함없이 순전파 단계를 나타낸다. 즉 역전파는 $B$와 $W$, 이 두 하위 단계로 이루어진다.
+
+### 95. "B를 먼저, W를 나중에" — ZBPP의 핵심 아이디어와 그 이유
+
+- **질문**: 역전파를 빠르고 효율적으로 끝내려면, 중간 레이어에서 $B$와 $W$ 중 어느 것을 먼저 해야 하는가?
+- **답: $B$를 먼저 한다.** 이유: 어떤 중간 레이어를 생각하면, 그 앞에 많은 이전 레이어들이 있고 역전파는 순서대로 그 레이어들을 거쳐야 한다. 만약 이 레이어가 $W$를 먼저 하면, 이전 레이어들은 이 레이어가 나중에 $B$를 수행할 때까지 기다려야 한다 — $B$가 끝난 뒤에야 그래디언트 신호를 받아 자신의 그래디언트 계산을 시작할 수 있기 때문이다.
+- 반대로 이 레이어가 **$B$를 먼저 계산해서 그 정보를 이전 레이어에 먼저 전달**하면, 이전 레이어가 더 빨리 연산을 시작할 수 있다 — $B$가 이전 레이어에 더 긴급한(중요한) 정보를 담고 있기 때문이다. **이것이 ZBPP의 핵심 아이디어: $B$를 먼저, 그다음 $W$를 한다.**
+
+### 96. ZBPP의 두 가지 변형 — 메모리 효율 버전과 버블 최소화 버전
+
+- 이전에 봤던 1F1B 예시(GPU 4개, micro-batch 8개)와 같은 세팅에서 ZBPP를 적용해보면, 이 그림의 앞부분을 이전 그림과 비교할 때 **GPU 2나 GPU 3에서 activation memory를 추가로 줄일 수 있다**는 차이가 보인다.
+- **기본 동작**: 마지막 GPU에서는 어떤 micro-batch에 대한 순전파를 하자마자 바로 그 micro-batch에 대한 역전파를 한다(1F1B와 동일). 여기서 일어나는 일은, 순전파는 평소와 같지만 역전파는 이제 $B$와 $W$ 두 단계로 나뉘어 있다는 점이다 — 그래서 순서를 더 유연하게 바꿀 수 있다. 기본 아이디어는 $B$ 계산을 $W$ 계산보다 먼저 하는 것인데, $B$를 먼저 하면 이전 레이어로 신호를 더 빨리 전달할 수 있기 때문이다.
+- 그림에서 밝은 파란색 $B$ 단계가 초록색 $W$ 단계보다 거의 항상 먼저 수행되는 것을 모든 micro-batch에서 볼 수 있다(순전파 $F$는 언제나처럼 $B$, $W$보다 먼저 온다). 예를 들어 순전파가 끝난 직후, 1F1B라면 바로 역전파 전체($B$+$W$)를 수행했겠지만, ZBPP에서는 **$B$ 계산만 먼저 수행해서 이전 디바이스들이 역전파를 더 일찍 시작**하게 하고, 실제 그래디언트 계산인 $W$는 조금 나중에 수행한다.
+- 이 논문("Zero Bubble Pipeline Parallelism")은 **ICLR 2024**에 발표됐다. 두 가지 버전이 있다:
+  - **버전 1(메모리 효율 버전)**: GPU당 최대 activation memory를 줄인다 — 역전파가 시작되기 전에 순전파가 micro-batch 4개에 대해서만 수행되는 것을 그림에서 확인할 수 있다. $F$, $B$, $W$를 전략적으로 배치하면 버블을 더 작게 만들 수 있다($B$를 제때보다 늦게 수행하면 더 앞쪽 GPU에 배치된 레이어들이 제때 역전파를 시작할 수 없다). 이 버전은 **1F1B와 메모리 사용량이 비슷**하면서, 버블을 더 효율적으로 채워 1F1B보다 완료 시간을 개선하려 한다 — 다만 여전히 일부 버블이 남아 있고, micro-batch 수가 늘어날수록 1F1B 대비 이득이 그리 크지 않을 수 있다(논문에서 언급).
+  - **버전 2(버블 최소화 버전)**: micro-batch 수가 적을 때도 대부분의 버블을 없애고 학습 시간을 최대한 줄인다. 문제는 디바이스 1이 이제 **7개의 서로 다른 micro-batch의 activation을 동시에 저장**해야 해서 activation memory가 늘어난다는 것 — 즉 이 버전은 **메모리를 더 쓰지만 지연(delay)을 줄인다.**
+
+### 97. ZBPP 성능 비교표 (ICLR 2024) — Throughput·메모리 트레이드오프
+
+- 논문에 실린 비교표: 한 열은 GPU당 초당 처리 샘플 수(처리량, throughput), 다른 열은 메모리 사용량이다. 이 표는 **zero bubble 버전 2, zero bubble 버전 1, 1F1B**(1F1B는 인터리빙이 없는 버전과 있는 버전 둘 다)를 비교한다.
+- **결과**: zero bubble pipeline parallelism이 초당 더 많은 데이터를 처리할 수 있다 — 이는 다른 방식들에 비해 완료 시간이 줄어든다는 뜻(= 주어진 시간 동안 더 많은 샘플을 처리). 하지만 그 대가로 **더 많은 메모리가 필요**하다 — 직관과 일치한다.
+- **버전 1은**: 1F1B와 비슷한 메모리 사용량을 보이면서도 더 많은 데이터를 처리할 수 있다 — 이 역시 앞선 설명과 일치한다.
+- 이런 비교표를 통해 1F1B, ZBPP 버전 1, ZBPP 버전 2의 차이를 명확히 확인할 수 있다. **일반화된 교훈**: 새로운 접근법이 계속 나오더라도, 이전 접근법이 쓸모없어지는 것은 아니다 — 많은 경우 새로운 아이디어는 이미 존재하던 좋은 아이디어에서 파생되기 때문이다(GPipe는 micro-batch를 도입했고, 1F1B는 그 순서를 바꾼 것뿐이며, ZBPP는 한발 더 나가 역전파 과정 자체를 두 단계로 나눈 뒤 그 순서를 바꾼다).
+
+### 98. DeepSeek의 Pipeline Parallelism 적용 사례 — Dispatch/Combine과 B-before-W 재확인
+
+- ZBPP보다 더 나은 방법이 있을까? 아주 단순한 모델 구조만 고려한다면 더 나은 선택지는 많지 않다고 언급됐다. 하지만 **expert parallelism** 개념(약 2주 뒤에 다룰 주제)을 이해하면 pipeline parallelism을 다른 아이디어와 결합해 더 개선할 수 있다 — 다만 이를 이해하려면 먼저 expert parallelism이 무엇인지 알아야 한다.
+- **DeepSeek 기술 보고서가 채택한 pipeline parallelism 버전**의 그림을 보여줬는데, "dispatch"·"combine"이라는 용어의 의미는 아직 모르므로 자세히 다루지는 않았다 — 다만 중요한 점은, DeepSeek 기술 보고서에서는 **pipeline parallelism을 단독으로 쓰지 않고, pipeline parallelism·expert parallelism·data parallelism을 함께 사용**했으며, 이를 통합하는 과정에서 pipeline 프로세스를 더 최적화했다는 것이다 — 그래서 지금 단계에서 완전히 이해하기는 어려운 게 당연하다.
+- 그래도 지금 알 수 있는 부분이 있다: 그림에서 순전파가 역전파보다 먼저 배치되어 있고, "backward"라고 표시된 부분이 전체 역전파 과정을 나타내는데, 그 안에 **"backward for input"**과 **"backward for weight"**가 모두 보인다. **Backward for input**은 $A$(레이어의 입력)에 대한 손실의 미분을 계산하는 것(= 앞서 정의한 $B$), **backward for weight**는 가중치에 대한 손실의 그래디언트를 계산하는 것(= 앞서 정의한 $W$)이다. 그리고 그림에서도 **대부분 backward for weight보다 backward for input을 먼저 수행**하는데, 이는 §95에서 본 "B를 먼저, W를 나중에" 전략과 일치한다.
+- 아직 expert parallelism을 다루지 않았으므로 이 DeepSeek 그림을 완전히 이해하기는 어렵지만, 적어도 지금까지 배운 네 가지 개념(GPipe, 1F1B, interleaving, ZBPP)을 바탕으로 **왜 이런 순서로 배치되어 있는지의 기본 원리**는 이해할 수 있다. Expert parallelism을 다룬 뒤 이 슬라이드로 다시 돌아올 것이라고 예고됐다. 다른 pipeline parallelism 논문들도(다른 병렬화 방식과 통합되지 않은 경우라면) 대부분 이 배경지식으로 이해할 수 있을 것이라고 언급됐다.
+
+### 99. Pipeline Parallelism 챕터 총정리
+
+- 이 내용(pipeline parallelism)을 다루는 데 지난주 수요일(Day 7), 이번 주 수요일(Day 8), 그리고 오늘 금요일(Day 9)까지 **세 번의 수업**을 썼다 — 원래 pipeline parallelism 분량은 세 번의 수업으로 계획되어 있었는데, 지난주(9/25) 휴일 때문에 이제 막 끝난 것이다.
+- **핵심 아이디어 재확인**: 모델을 여러 GPU에 레이어 단위로 순차적으로 나누는 것. 주로 activation memory만 줄이는 data parallelism과 비교하면, **pipeline parallelism은 activation memory와 parameter memory를 모두 상당히 줄여준다.** 그리고 버블을 줄임으로써 학습 과정의 속도도 높일 수 있다.
+- **다룬 접근법들의 흐름**: 가장 기본적인 방법은 micro-batch를 도입하는 것(GPipe)이었고, 이를 바탕으로 사람들은 순서를 바꾸고 과정을 더 세분화하는 방법을 연구했다 — 순전파와 역전파의 순서를 바꾸고(1F1B), 역전파 자체를 두 단계($B$, $W$)로 나누고 그 순서를 바꾸고(ZBPP), 각 GPU에 할당된 모델 부분을 더 작은 chunk로 나누는 것(interleaving)까지.
+
+### 100. Tensor Parallelism 도입 — 오늘의 두 가지 질문과 동기
+
+- Pipeline parallelism에 대한 질문을 마지막으로 받은 뒤, 남은 약 40분 동안 **tensor parallelism**이라는 또 다른 병렬화 방식을 다룬다고 예고 — 나중에 이 모든 방식들이 어떻게 통합될 수 있는지도 볼 것이라고 언급.
+- 오늘 주제의 제목은 "**Tensor Parallelism과 Hybrid Parallelism**"이다. Hybrid parallelism은 지금까지 다룬 여러 병렬화 방식들을 통합하려는 시도 — 지금까지 data parallelism, pipeline parallelism을 다뤘고, 이제 tensor parallelism을 다루며, 다음 주부터는 **expert parallelism**을 시작한다.
+- 이 강의에서 던지는 **두 가지 질문**: (1) pipeline parallelism은 모델을 레이어 단위로 나눴는데, 그 외에 여러 머신을 이용해 효율적으로 학습하기 위해 모델을 나누는 다른 전략이 있는가 — tensor parallelism은 어떤 방식인가? (2) 여러 병렬화 방식을 동시에 사용할 수 있는가? **답은 "그렇다"**이며, 어떻게 가능한지는 간단히 다룰 예정이다.
+- Data parallelism·pipeline parallelism은 잠시 잊고 처음부터 다시 시작: 학습 데이터셋과 머신러닝 모델이 있고, 이런 계산을 단일 머신에서 수행하려면 많은 연산량·메모리·시간이 필요하다는 것이 출발점이다.
+
+### 101. 단일 레이어 내부의 연산 병목 — 왜 레이어 안에서 나누는가
+
+- 각 레이어 안에서는 순전파 과정에서도 항상 행렬곱(matrix multiplication)을 수행해야 하고, 역전파 과정에서는 훨씬 더 많은 행렬 연산이 필요하다. 순전파만 봐도, 레이어마다 이런 계산으로 출력을 구하고 그 출력이 다음 레이어로 전달되는 과정에서 **모든 단계가 행렬곱**이다.
+- 이 입력은 단일 데이터 샘플에 대한 activation일 수도 있고, mini-batch 안의 여러 샘플에 대한 정보를 담고 있을 수도 있다(그 경우 계산이 더 복잡해진다).
+- 여러 레이어를 고려하지 않더라도, **단일 레이어 안에서 가중치 행렬 $W$의 크기가 매우 크다면**(입력 차원과 출력 차원이 모두 매우 큰 경우) 이 한 번의 계산만으로도 상당한 지연이 발생하고, 엄청난 양의 FLOPs·MAC 연산이 필요하다.
+- **Tensor parallelism의 아이디어**: 레이어들 "사이로" 계산을 나누는 pipeline parallelism과 달리, **한 레이어 안에서 일어나는 계산 자체를 여러 머신으로 더 효율적으로 만드는 것**이다. 기본적으로 일어나는 일: 첫 번째 레이어에서는 여러 머신을 사용해 이 계산을 수행하고, 그 레이어의 순전파가 끝나면 **같은 머신들**을 이용해 다음 레이어의 순전파를 수행하는 식으로 이어간다. 즉 레이어를 나눠서 각 GPU에 하나씩 할당하는 방식(pipeline parallelism)이 아니라, **모든 GPU가 협력해서 각 레이어 안에서 일어나는 계산을 함께 수행**하는 것이 tensor parallelism이다.
+
+### 102. Row-split Tensor Parallelism 워크드 예시
+
+- 구체적인 예시로 시작: $4 \times 2$ 행렬 $W$,
+  $$W = \begin{pmatrix}1&2\\3&4\\5&6\\7&8\end{pmatrix}$$
+  그리고 이 레이어의 입력을 $X = \begin{pmatrix}9\\10\end{pmatrix}$라 하자. $WX$를 계산하면: 1,3,5,7로 이루어진 열에 9를 곱하고 2,4,6,8로 이루어진 열에 10을 곱한 뒤 더한 값이 결과다(누구나 손으로 계산할 수 있는 간단한 예시지만, 실제로는 이 차원이 매우 커서 단일 머신에서 오래 걸린다고 가정).
+- **Row split의 아이디어**: $W$ 행렬을 행(row) 단위로 두 부분으로 나누고 계산을 병렬로 수행한다 — $W$의 위쪽 절반을 $W_1$, 아래쪽 절반을 $W_2$라 하면
+  $$W_1 = \begin{pmatrix}1&2\\3&4\end{pmatrix}, \quad W_2 = \begin{pmatrix}5&6\\7&8\end{pmatrix}$$
+  GPU1은 $W_1$을, GPU2는 $W_2$를 담당한다.
+- **결과 재구성**: GPU1은 $W_1$만 가지고 있지만, $W_1 X$를 계산하면 전체 결과의 위쪽 부분을 그대로 얻는다는 것을 쉽게 알 수 있다. 마찬가지로 $W_2 X$를 계산하면 결과의 아래쪽 부분을 얻는다. 즉 GPU1은 $Z_1 = W_1 X$를, GPU2는 $Z_2 = W_2 X$를 계산한다. 이 값들이 비선형 activation을 거쳐 $A_1$, $A_2$가 되지만, **이 결과들은 실제로 서로 다른 머신에 나뉘어 있다** — GPU1이 하나를, GPU2가 다른 하나를 계산했기 때문이다.
+- 그래서 이 두 결과를 한 곳으로 모으는 과정(이 레이어의 최종 출력을 재구성하는 통신)이 필요한데, 이는 다음 레이어를 어떻게 다룰지(§105의 다층 구조)와 맞물려 있어 이 시점에서는 "서로 다른 위치에서 계산된 결과를 어딘가로 모아야 한다"는 정도만 짚어두고, 구체적으로 어디서 모으는지는 뒤로 미룬다.
+
+### 103. Column-split Tensor Parallelism 워크드 예시와 Row-split과의 대조
+
+- 행 대신 **열(column)** 기준으로 나누는 방법도 가능하다 — 같은 연산이므로 결과는 달라지지 않고, 그저 나누는 방향만 다르다. $W$의 1,3,5,7번째 원소로 이루어진 첫 번째 열을 $W_1$, 2,4,6,8번째 원소로 이루어진 두 번째 열을 $W_2$라 하면
+  $$W_1 = \begin{pmatrix}1\\3\\5\\7\end{pmatrix}, \quad W_2 = \begin{pmatrix}2\\4\\6\\8\end{pmatrix}$$
+  GPU1은 $W_1$을, GPU2는 $W_2$를 처리한다.
+- **입력도 나눠야 한다**: $X$를 $X_1 = 9$(첫 번째 성분), $X_2 = 10$(두 번째 성분)으로 나누면, GPU1은 $W_1 X_1$을, GPU2는 $W_2 X_2$를 계산한다 — $W_1$은 $X_1$과만 곱해지고 $W_2$는 $X_2$와만 곱해진다. **Row split과 달리, 여기서는 GPU1이 $X_2$를 필요로 하지 않고 GPU2도 $X_1$을 필요로 하지 않는다** — 각 GPU가 전체 $X$를 필요로 했던 row split과의 핵심 대조점이다.
+- 이 결과를 $Z_1$, $Z_2$라 하면, **최종 결과는 이 둘의 합($Z_1 + Z_2$)**이다 — row split에서는 부분 결과들을 **연결(concatenation)**해서 모아야 했지만, column split에서는 **합산(summation)**해서 모아야 한다. 어느 쪽이든 실제로 최종 결과를 완성하려면 통신이 필요하다.
+- 역전파는 간략히만 언급됐다: 체인룰에 따라 입력 또는 출력에 대한 손실의 그래디언트를 계산하고, 거기서 이전 레이어로 전달할 역전파 신호도 계산할 수 있다 — 그렇게 어렵지는 않지만 어느 정도의 통신이 필요하다(1·2주차 강의노트의 역전파 개념과 동일한 논리).
+
+### 104. DeepSeek은 추론(Forward)에서만 Tensor Parallelism을 사용 — Parameter Memory 이점
+
+- **중요한 사실 확인**: DeepSeek 기술 보고서에서는 tensor parallelism이 (항상은 아니지만) 대체로 **학습이 아니라 추론 단계에서** 채택됐다. 보고서에서 "tensor parallelism"을 검색하면, 이 모델을 **비용이 많이 드는 tensor parallelism 없이 학습시켰다**고 명시되어 있다 — 즉 학습 과정에서는 tensor parallelism을 쓰지 않았다.
+- 그렇다면 왜 이걸 배워야 하는가 — **추론 단계, 구체적으로는 순전파를 수행할 때 사용했기 때문**이다. 그래서 이번 tensor parallelism 강의에서는 주로 순전파를 다루고, 역전파는 깊게 다루지 않는다(관심이 있다면 체인룰에 기반한 역전파를 따로 찾아볼 수 있다고 언급).
+- **Parameter memory 이점(직관적 설명)**: 역전파·activation memory는 자세히 다루지 않았지만, parameter memory 관점에서는 각 GPU가 책임지는 파라미터 수가 GPU 수 $N$에 **반비례해서** 줄어든다. 위 예시는 GPU 2개인 단순한 경우지만, 더 많은 행이나 열로 나눠서 3개, 4개 등 더 많은 GPU로 쉽게 확장할 수 있다 — 예컨대 GPU 4개를 쓰면, row split이면 $Z_1$부터 $Z_4$까지 얻어 이를 연결(concatenation)하고, column split이면 4개의 열 묶음으로 나눠 $W_1 X_1$부터 $W_4 X_4$까지 계산한 뒤 모두 합산한다.
+
+### 105. "왜 꼭 여러 GPU가 필요한가" Q&A, 그리고 다층(Multi-layer) 구조로의 확장 예고
+
+- **Q&A**: 이게 정말 여러 GPU를 써야 풀어야 하는 문제인가 — 코어를 더 할당하는 식으로 GPU 하나 안에서 더 효율적으로 처리할 수는 없는가? **답**: 결국 이것들은 모두 행렬곱일 뿐이므로 분명히 그럴 수도 있다. 하지만 **대부분의 분산 학습 연구는 이미 GPU 구성이 고정되어 있다는 가정 하에서 진행된다** — 사양이 이미 고정된 장비들을 갖고 있고, 그 장비들로 처리량을 최대화하려는 상황이다. 각 GPU가 수행하는 곱셈 수를 줄이는 것이 (GPU 수에) 정비례해서 속도를 높여주지는 않더라도, 지연 시간을 의미 있게 줄여줄 수 있다 — 그래서 이 연구(DeepSeek)에서도 순전파 과정에 tensor parallelism을 적용한 것이다.
+- **아직 답하지 않은 질문**: 단일 레이어만 다뤘는데, 이 결과들의 합산(column split)이나 연결(row split)을 **정확히 어디서** 해야 하는가? 이 질문에 답하려면 **다층(multi-layer) 구조**를 고려해야 한다 — 각 GPU의 연산 결과가 바로 다음 레이어의 입력이 되거나 적어도 관련이 있기 때문에, 출력을 어떻게 계산하고 다음 레이어에 어떻게 전달할지를 신중히 생각해야 한다.
+- **Row split을 모든 레이어에 쓸 때의 통신 패턴(워크드 예시)**: 레이어 $L$의 $W$를 row split해서 $W_1$, $W_2$로 나누고, 이어지는 레이어 $W'$, $W_2'$도 마찬가지로 row split한다고 하자.
+  - 레이어 $L$: 각 GPU에서 $W_1 X$, $W_2 X$를 계산하는데, row split이므로 **각 GPU가 전체 $X$를 필요로 한다**(column split처럼 $X_1$, $X_2$만 필요로 하는 것과 다름). GPU1은 $W_1 X$, GPU2는 $W_2 X$를 계산해 각각 $A_1$, $A_2$를 얻는다.
+  - 다음 레이어($W'$)도 row split 방식을 쓰고 싶다면, 그 레이어의 입력은 **$A_1$과 $A_2$를 연결(concatenation)한 것**이어야 한다(비선형 activation은 단순화를 위해 생략). 그런데 다음 레이어도 row 기준으로 나뉘어 있으므로 그 연산을 하려면 **항상 전체 입력**이 필요하다 — 그래서 $A_2$가 GPU1로, $A_1$이 GPU2로 전송된 뒤 각 GPU에서 연결을 수행하고, 그 결과가 다음 레이어의 입력이 된다.
+  - 그 뒤 비선형 activation을 거친 이 입력이 $W'$로 들어가고, 다시 (예로 든 독립적인 $4\times4$ 행렬) $W_2'$도 row split하면 같은 논리가 반복된다 — **매 레이어의 행렬곱이 끝날 때마다, 각 GPU는 자신의 계산 결과를 상대 GPU로 전송**해야 다른 GPU도 다음 레이어의 연산을 진행할 수 있다(두 GPU의 결과가 연결되기 전에는 어느 쪽도 다음 연산을 할 수 없기 때문).
+  - **다음 수요일 예고**: 모든 레이어를 column split으로 나눴을 때 어떤 일이 벌어지는지 같은 방식으로 살펴보고, row split 전용 방식과 비교해서 어느 전략이 실제로 더 나은지 논의할 예정이다.
+- 강의는 쉬는 시간을 갖지 않고 진행됐고, 이 지점(다음 수요일 예고)에서 전사가 끊긴다.
